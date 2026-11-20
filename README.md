@@ -55,6 +55,8 @@ python examples/make_examples.py          # after changing the example scenario
 Every change to `src/` bumps the version in `src/waypoint/__init__.py` (a test checks it against
 `origin/main`).
 
+Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) says how they are handled.
+
 ## Licence
 
 MIT, see [LICENSE](LICENSE).
