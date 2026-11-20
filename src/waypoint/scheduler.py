@@ -16,8 +16,10 @@ from datetime import datetime, timedelta
 
 from starlette.concurrency import run_in_threadpool
 
+from . import recur
 from .messages import Outbox
-from .store import OPEN, Store, item_id
+from .recurrences import Recurrences, recurrence_id
+from .store import OPEN, WAYPOINT, Store, item_id
 from .timeutil import fmt, parse_delay, parse_ts
 
 log = logging.getLogger("waypoint.scheduler")
@@ -36,6 +38,8 @@ class PassReport:
     steps_caught_up: int = 0
     running_checks: int = 0
     running_lapsed: int = 0
+    occurrences: int = 0
+    occurrences_skipped: int = 0
     messages: list[int] = field(default_factory=list)
 
 
@@ -70,6 +74,7 @@ class Scheduler:
                 self._wakes(c, now, report)
                 self._ladders(c, now, report)
                 self._running(c, now, report)
+                self._recurrences(c, now, report)
                 for fn in self.pass_hooks:
                     fn(c, now)
                 if report.outage:
@@ -125,8 +130,11 @@ class Scheduler:
         (no catch-up of those that fell due while the item ran)."""
         events = Store.client_events(c, num)
         set_id, set_at = 0, due_at
-        for e in events:
-            if e["event"] == "created" or "due_at" in e["changes"]:
+        # when the due time was set: the creation or a change of it, whoever made it (Waypoint creates
+        # occurrences of recurrences itself); only attending to it needs the owner
+        for e in c.execute("SELECT id, at, event, changes FROM history WHERE item = ? AND event IN ('created', 'changed') "
+                           "ORDER BY id", (num,)):
+            if e["event"] == "created" or "due_at" in json.loads(e["changes"] or "{}"):
                 set_id, set_at = e["id"], e["at"]
         lapse = c.execute("SELECT id, at FROM history WHERE item = ? AND by IS NULL AND event = 'derived' "
                           "AND note LIKE 'running lapsed%' AND id > ? ORDER BY id DESC LIMIT 1",
@@ -265,6 +273,96 @@ class Scheduler:
             st._history(c, row["num"], None, "derived", {"state": ["running", target], "note": [row["note"], note]},
                         note)
             report.running_lapsed += 1
+
+    # ------------------------------------------------------------------ recurring items
+    def _recurrences(self, c, now: datetime, report: PassReport) -> None:
+        """Each active recurrence whose next occurrence has come gets an ordinary item for its owner,
+        as its overlap rule allows; occurrences missed while Waypoint was down are caught up as its
+        catch_up rule says (docs/design/RECURRING.md)."""
+        st = self.store
+        rec = Recurrences.of(st)
+        tz = st.settings.tz
+        for r in c.execute("SELECT * FROM recurrences WHERE state = 'active' AND next_at IS NOT NULL AND next_at <= ? "
+                           "ORDER BY next_at, num", (fmt(now),)).fetchall():
+            # each recurrence on its own: a failure rolls back only that one, and the pass goes on
+            c.execute("SAVEPOINT recurrence")
+            try:
+                self._recurrence(c, rec, r, now, report, tz)
+                c.execute("RELEASE recurrence")
+            except Exception as exc:
+                c.execute("ROLLBACK TO recurrence")
+                c.execute("RELEASE recurrence")
+                self._recurrence_failed(c, rec, r, exc)
+
+    def _recurrence(self, c, rec, r, now: datetime, report: PassReport, tz: str) -> None:
+        sched, created = json.loads(r["schedule"]), parse_ts(r["created_at"])
+        first = last = parse_ts(r["next_at"])
+        count = 1
+        while True:  # count what fell due up to now, keeping only the last
+            t = recur.next_after(sched, last, created, tz)
+            if t > now:
+                break
+            last, count = t, count + 1
+        down = report.outage is not None and first > parse_ts(report.outage[0])
+        missed = count > 1 or down  # more than one fell due, or the one did while Waypoint was down
+        why = "while Waypoint was down" if down else "at once"
+        if missed and r["catch_up"] == "none":
+            rec.history(c, r["num"], None, "skipped", None,
+                        f"{count} occurrence(s) up to {self.outbox.local(fmt(last))} fell due {why}; not caught up")
+            report.occurrences_skipped += count
+        else:
+            note = f"caught up: {count} occurrence(s) fell due {why}" if missed else None
+            self._occur(c, rec, r, last, note, report)
+        nxt = recur.next_after(sched, max(last, now), created, tz)
+        c.execute("UPDATE recurrences SET last_at = ?, next_at = ? WHERE num = ?", (fmt(last), fmt(nxt), r["num"]))
+        rec._changed(c, r["num"])
+
+    def _recurrence_failed(self, c, rec, r, exc: Exception) -> None:
+        """An occurrence couldn't be made (a bug or bad data): the recurrence pauses, its history says
+        why (by type only), and the coordinator is told, so the rest of the pass is unaffected."""
+        rid = recurrence_id(r["num"])
+        log.error("recurrence %s failed: %s; paused", rid, type(exc).__name__)
+        c.execute("UPDATE recurrences SET state = 'paused', next_at = NULL, version = version + 1, updated_by = NULL "
+                  "WHERE num = ?", (r["num"],))
+        rec.history(c, r["num"], None, "changed", {"state": [r["state"], "paused"]},
+                    f"paused: creating its occurrence failed ({type(exc).__name__})")
+        self.outbox.add(c, self.store.coordinator(), "recurring", None,
+                        f"{rid} ({r['title']}) was paused: creating its occurrence failed ({type(exc).__name__}). "
+                        "Check it, then resume it or stop it.")
+        rec._changed(c, r["num"])
+
+    def _occur(self, c, rec, r, at: datetime, note: str | None, report: PassReport) -> None:
+        st = self.store
+        rid, ats = recurrence_id(r["num"]), fmt(at)
+        open_ = c.execute("SELECT num FROM items WHERE recurrence = ? AND state IN ('next','running','waiting') "
+                          "ORDER BY occurrence_at, num", (r["num"],)).fetchall()
+        if open_ and r["overlap"] == "skip":
+            line = f"{rid} occurrence at {self.outbox.local(ats)} skipped: the previous one is still open"
+            st._history(c, open_[0]["num"], None, "derived", None, line)
+            rec.history(c, r["num"], None, "skipped", None, f"{self.outbox.local(ats)}: {item_id(open_[0]['num'])} still open")
+            report.occurrences_skipped += 1
+            return
+        if open_ and r["overlap"] == "replace":
+            for o in open_:
+                st.patch_item(WAYPOINT, item_id(o["num"]),
+                              {"state": "dropped", "note": f"superseded by the occurrence at {self.outbox.local(ats)}"})
+        body = {"track": r["track"], "title": r["title"], "kind": r["kind"], "owner": r["owner"],
+                "due_at": fmt(at + parse_delay(r["window_len"])), "overdue": json.loads(r["overdue"]),
+                "links": json.loads(r["links"])}
+        if r["label"]:
+            body["label"] = r["label"]
+        if note or r["note"]:
+            body["note"] = (note or r["note"])[:200]
+        made = st.create_item(WAYPOINT, body)
+        num = int(made["id"][2:])
+        c.execute("UPDATE items SET recurrence = ?, occurrence_at = ? WHERE num = ?", (r["num"], ats, num))
+        st._history(c, num, None, "derived", None, f"occurrence of {rid} at {self.outbox.local(ats)}")
+        rec.history(c, r["num"], None, "occurred", None, f"{made['id']} for {self.outbox.local(ats)}")
+        row = self.outbox.item_row(c, num)
+        self.outbox.add(c, r["owner"], "recurring", row,
+                        f"{self.outbox.ref(row)} is due: the {self.outbox.local(ats)} occurrence of {rid}.",
+                        fell_due_at=ats, late=self.outbox.late_for(ats))
+        report.occurrences += 1
 
     # ------------------------------------------------------------------ outage summary
     def _outage_summary(self, c, report: PassReport) -> None:

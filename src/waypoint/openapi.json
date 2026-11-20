@@ -2,7 +2,7 @@
  "openapi": "3.1.0",
  "info": {
   "title": "Waypoint API",
-  "version": "0.2.2",
+  "version": "2.0.0",
   "summary": "Open items, dependencies and wake-ups for a group of agent sessions.",
   "description": "The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client\nof it. The prose that goes with this file is `docs/API.md`; where the two differ, this file is\nthe contract and the prose is a bug.\n\nConventions:\n- JSON in and out, UTF-8. Times are RFC 3339. Waypoint answers in UTC with a `Z` suffix; input\n  must carry a zone (`Z` or an offset) and is converted to UTC. A day (`when` with precision\n  `day`) is a plain date, `YYYY-MM-DD`, in the deployment's time zone.\n- Every request but `GET /v1/health` carries `Authorization: Bearer <token>`.\n- Unknown fields in a request body are refused (`invalid`), never stored.\n- Absent fields in a response are never used for \"unknown\": a field without a value is `null`\n  or an empty list.\n",
   "license": {
@@ -398,6 +398,236 @@
      },
      "409": {
       "$ref": "#/components/responses/Conflict"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/recurrences": {
+   "get": {
+    "tags": [
+     "recurrences"
+    ],
+    "summary": "List recurrences.",
+    "parameters": [
+     {
+      "name": "owner",
+      "in": "query",
+      "schema": {
+       "$ref": "#/components/schemas/ClientName"
+      }
+     },
+     {
+      "name": "track",
+      "in": "query",
+      "schema": {
+       "$ref": "#/components/schemas/TrackId"
+      }
+     },
+     {
+      "name": "state",
+      "in": "query",
+      "description": "Comma-separated states, or `all`; default `active,paused`.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The recurrences, by `next_at` (paused and stopped ones last), then id.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RecurrenceList"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "recurrences"
+    ],
+    "summary": "Create a recurrence.",
+    "description": "Same rules as creating an item: the content check, the length limits, and permissions (an\nagent may create one for itself or hand it to another agent; one owned by a human is created\nand changed only by that human or a coordinator). Its first occurrence falls due\nat `next_at`.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RecurrenceCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Created.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Recurrence"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/recurrences/{id}": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/RecurrenceId"
+     }
+    }
+   ],
+   "get": {
+    "tags": [
+     "recurrences"
+    ],
+    "summary": "One recurrence.",
+    "responses": {
+     "200": {
+      "description": "The recurrence.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Recurrence"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "recurrences"
+    ],
+    "summary": "Change, pause, resume or stop a recurrence.",
+    "description": "A changed schedule takes effect from the next occurrence; open occurrences stay as they are.\nResuming starts from the next scheduled time without catching up the paused span. `stopped`\nis final.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RecurrencePatch"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The changed recurrence.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Recurrence"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "$ref": "#/components/responses/Conflict"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/recurrences/{id}/checkin": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/RecurrenceId"
+     }
+    }
+   ],
+   "post": {
+    "tags": [
+     "recurrences"
+    ],
+    "summary": "A job on a timer reports a run.",
+    "description": "For a recurrence with `checkin: true`. `ok` closes the oldest open occurrence as done, with\nthe note; `failed` drops it with the note, so its owner is told. A check-in when no\noccurrence is open is recorded in the recurrence's history and answered with\n`occurrence: null`. Allowed for the client named in `checkin_by` (which may do nothing\nelse with the recurrence), the owner, coordinators and humans.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CheckinRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "What the check-in matched.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Checkin"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
      },
      "422": {
       "$ref": "#/components/responses/Content"
@@ -938,7 +1168,7 @@
      "views"
     ],
     "summary": "A server-sent stream of changes, so pages update live.",
-    "description": "`text/event-stream`. After every committed change Waypoint sends one event per changed\nitem (`event: item`, data `{id, version, state, updated_at}`) and per changed track\n(`event: track`, data `{id}`), each with an `id:` of the form `<run>-<seq>` (`run` changes\nwhen Waypoint restarts; `seq` increases). A page reloads what it shows\nwhen it sees one. Lines starting with `:` are heartbeats. Reconnecting with the\n`Last-Event-ID` header sends what was missed, or `event: reset` (data `{reason}`) when that\nis too far back, the id is from before a restart, or the reader was too slow: then reload\neverything. The token goes in the\nAuthorization header like everywhere else, never in the URL; a browser page reads the\nstream through its own backend.\n",
+    "description": "`text/event-stream`. After every committed change Waypoint sends one event per changed\nitem (`event: item`, data `{id, version, state, updated_at}`) and per changed track\n(`event: track`, data `{id}`), and per changed recurrence (`event: recurrence`, data `{id, version,\nstate, next_at}`), each with an `id:` of the form `<run>-<seq>` (`run` changes\nwhen Waypoint restarts; `seq` increases). A page reloads what it shows\nwhen it sees one. Lines starting with `:` are heartbeats. Reconnecting with the\n`Last-Event-ID` header sends what was missed, or `event: reset` (data `{reason}`) when that\nis too far back, the id is from before a restart, or the reader was too slow: then reload\neverything. The token goes in the\nAuthorization header like everywhere else, never in the URL; a browser page reads the\nstream through its own backend.\n",
     "parameters": [
      {
       "name": "Last-Event-ID",
@@ -1116,6 +1346,13 @@
     "description": "Set by Waypoint, never reused.",
     "examples": [
      "W-142"
+    ]
+   },
+   "RecurrenceId": {
+    "type": "string",
+    "pattern": "^R-[1-9][0-9]*$",
+    "examples": [
+     "R-3"
     ]
    },
    "DeliveryId": {
@@ -1602,6 +1839,8 @@
      "at_risk",
      "at_risk_from",
      "overdue_steps",
+     "recurrence",
+     "occurrence_at",
      "version",
      "created_at",
      "created_by",
@@ -1748,6 +1987,28 @@
      "late": {
       "type": "boolean",
       "description": "Past `due_at` and not done or dropped."
+     },
+     "recurrence": {
+      "description": "The recurrence this item is an occurrence of; `null` for an ordinary item.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/RecurrenceId"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "occurrence_at": {
+      "description": "For an occurrence, the scheduled time it stands for; `null` otherwise.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
      },
      "at_risk": {
       "type": "boolean",
@@ -2323,7 +2584,8 @@
      "tracks",
      "owners",
      "items",
-     "edges"
+     "edges",
+     "upcoming"
     ],
     "properties": {
      "generated_at": {
@@ -2381,6 +2643,52 @@
       "items": {
        "$ref": "#/components/schemas/Edge"
       }
+     },
+     "upcoming": {
+      "type": "array",
+      "description": "The coming occurrences of active recurrences within the window, oldest first: computed,\nnever stored (an occurrence becomes an item only when it falls due). A page may draw them\nas faint markers.\n",
+      "items": {
+       "$ref": "#/components/schemas/Upcoming"
+      }
+     }
+    }
+   },
+   "Upcoming": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "recurrence",
+     "at",
+     "owner",
+     "track",
+     "title",
+     "label"
+    ],
+    "properties": {
+     "recurrence": {
+      "$ref": "#/components/schemas/RecurrenceId"
+     },
+     "at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Label"
+       },
+       {
+        "type": "null"
+       }
+      ]
      }
     }
    },
@@ -2454,7 +2762,8 @@
      "tracks",
      "owners",
      "items",
-     "edges"
+     "edges",
+     "recurrences"
     ],
     "properties": {
      "generated_at": {
@@ -2499,6 +2808,545 @@
       "items": {
        "$ref": "#/components/schemas/Edge"
       }
+     },
+     "recurrences": {
+      "type": "array",
+      "description": "The human's own recurrences (active and paused), by `next_at`.",
+      "items": {
+       "$ref": "#/components/schemas/Recurrence"
+      }
+     }
+    }
+   },
+   "Interval": {
+    "type": "string",
+    "pattern": "^[0-9]{1,4}[mhd]$",
+    "description": "Minutes, hours or days, e.g. `15m`, `2h`, `1d`; at least 5 minutes."
+   },
+   "ClockTime": {
+    "type": "string",
+    "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+    "description": "A wall-clock time, `HH:MM`, in the recurrence's zone."
+   },
+   "Weekday": {
+    "type": "string",
+    "enum": [
+     "mon",
+     "tue",
+     "wed",
+     "thu",
+     "fri",
+     "sat",
+     "sun"
+    ]
+   },
+   "Schedule": {
+    "description": "When a recurrence occurs. Times are wall-clock times in `tz` (default: the deployment's\nzone). A time that doesn't exist that day (clocks go forward) fires at the first valid minute\nafter it; a time that occurs twice (clocks go back) fires once, the first time. An interval\nruns on absolute time, anchored at `from` (default: when the recurrence was created).\n",
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "every"
+      ],
+      "properties": {
+       "every": {
+        "$ref": "#/components/schemas/Interval"
+       },
+       "from": {
+        "$ref": "#/components/schemas/Timestamp"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "daily"
+      ],
+      "properties": {
+       "daily": {
+        "$ref": "#/components/schemas/ClockTime"
+       },
+       "tz": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "weekly",
+       "at"
+      ],
+      "properties": {
+       "weekly": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 7,
+        "uniqueItems": true,
+        "items": {
+         "$ref": "#/components/schemas/Weekday"
+        }
+       },
+       "at": {
+        "$ref": "#/components/schemas/ClockTime"
+       },
+       "tz": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "monthly",
+       "at"
+      ],
+      "properties": {
+       "monthly": {
+        "description": "The day of the month, 1 to 28, or `last`.",
+        "oneOf": [
+         {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 28
+         },
+         {
+          "type": "string",
+          "const": "last"
+         }
+        ]
+       },
+       "at": {
+        "$ref": "#/components/schemas/ClockTime"
+       },
+       "tz": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   },
+   "RecurrenceState": {
+    "type": "string",
+    "enum": [
+     "active",
+     "paused",
+     "stopped"
+    ]
+   },
+   "Recurrence": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "owner",
+     "track",
+     "title",
+     "label",
+     "kind",
+     "note",
+     "links",
+     "overdue",
+     "schedule",
+     "window",
+     "overlap",
+     "catch_up",
+     "checkin",
+     "checkin_by",
+     "state",
+     "next_at",
+     "last_at",
+     "open_occurrence",
+     "version",
+     "created_at",
+     "created_by",
+     "updated_at",
+     "updated_by"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/RecurrenceId"
+     },
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Label"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "task",
+       "event"
+      ],
+      "description": "The kind of each occurrence."
+     },
+     "note": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     },
+     "overdue": {
+      "type": "array",
+      "description": "The occurrences' own ladder; empty means the deployment's default.",
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "schedule": {
+      "$ref": "#/components/schemas/Schedule"
+     },
+     "window": {
+      "description": "How long an occurrence may take; its `due_at` is the occurrence time plus this.",
+      "$ref": "#/components/schemas/Delay"
+     },
+     "overlap": {
+      "type": "string",
+      "enum": [
+       "skip",
+       "replace",
+       "allow"
+      ],
+      "description": "When the next occurrence falls due while the previous one is open: `skip` it (a history\nline on the open one), `replace` the open one (dropped with a reason), or `allow` both.\n"
+     },
+     "catch_up": {
+      "type": "string",
+      "enum": [
+       "latest",
+       "none"
+      ],
+      "description": "After Waypoint's own downtime, one late occurrence for the missed span (`latest`), or none."
+     },
+     "checkin": {
+      "type": "boolean",
+      "description": "A job on a timer reports each run (`POST /v1/recurrences/{id}/checkin`)."
+     },
+     "checkin_by": {
+      "description": "The client a job checks in as. It may check in and do nothing else with the recurrence;\nset by whoever may change the recurrence.\n",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "state": {
+      "$ref": "#/components/schemas/RecurrenceState"
+     },
+     "next_at": {
+      "description": "When the next occurrence falls due; `null` when paused or stopped.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "last_at": {
+      "description": "The scheduled time of the last occurrence (created, skipped or caught up), if any.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "open_occurrence": {
+      "description": "The oldest occurrence that is still open, if any (the one a check-in closes).",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ItemId"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "version": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "created_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "created_by": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "updated_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "updated_by": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "RecurrenceCreate": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "track",
+     "title",
+     "schedule"
+    ],
+    "properties": {
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "$ref": "#/components/schemas/Label"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "task",
+       "event"
+      ],
+      "default": "task"
+     },
+     "note": {
+      "$ref": "#/components/schemas/Note"
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     },
+     "overdue": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "schedule": {
+      "$ref": "#/components/schemas/Schedule"
+     },
+     "window": {
+      "$ref": "#/components/schemas/Delay"
+     },
+     "overlap": {
+      "type": "string",
+      "enum": [
+       "skip",
+       "replace",
+       "allow"
+      ],
+      "default": "skip"
+     },
+     "catch_up": {
+      "type": "string",
+      "enum": [
+       "latest",
+       "none"
+      ],
+      "default": "latest"
+     },
+     "checkin": {
+      "type": "boolean",
+      "default": false
+     },
+     "checkin_by": {
+      "$ref": "#/components/schemas/ClientName"
+     }
+    }
+   },
+   "RecurrencePatch": {
+    "type": "object",
+    "additionalProperties": false,
+    "minProperties": 1,
+    "properties": {
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Label"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     },
+     "overdue": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "schedule": {
+      "$ref": "#/components/schemas/Schedule"
+     },
+     "window": {
+      "$ref": "#/components/schemas/Delay"
+     },
+     "overlap": {
+      "type": "string",
+      "enum": [
+       "skip",
+       "replace",
+       "allow"
+      ]
+     },
+     "catch_up": {
+      "type": "string",
+      "enum": [
+       "latest",
+       "none"
+      ]
+     },
+     "checkin": {
+      "type": "boolean"
+     },
+     "checkin_by": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "state": {
+      "description": "`paused` and back to `active`; `stopped` is final.",
+      "$ref": "#/components/schemas/RecurrenceState"
+     },
+     "if_version": {
+      "type": "integer",
+      "minimum": 1
+     }
+    }
+   },
+   "RecurrenceList": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "recurrences"
+    ],
+    "properties": {
+     "recurrences": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Recurrence"
+      }
+     }
+    }
+   },
+   "CheckinRequest": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "result"
+    ],
+    "properties": {
+     "result": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "failed"
+      ]
+     },
+     "note": {
+      "$ref": "#/components/schemas/Note"
+     }
+    }
+   },
+   "Checkin": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "recurrence",
+     "occurrence"
+    ],
+    "properties": {
+     "recurrence": {
+      "$ref": "#/components/schemas/Recurrence"
+     },
+     "occurrence": {
+      "description": "The occurrence the check-in closed (done for `ok`, dropped for `failed`), or `null` when none was open.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Item"
+       },
+       {
+        "type": "null"
+       }
+      ]
      }
     }
    },
@@ -2619,9 +3467,10 @@
        "undeliverable",
        "deliverer_silent",
        "outage",
-       "running_check"
+       "running_check",
+       "recurring"
       ],
-      "description": "What the message is about; see `docs/API.md` (Deliveries)."
+      "description": "What the message is about; see `docs/API.md` (Deliveries). An open set: new kinds may be added, and readers ignore kinds they don't know."
      },
      "item": {
       "description": "The item the message is about, if any.",
@@ -2981,7 +3830,8 @@
      "late_items",
      "unknown_owners",
      "running_stale",
-     "coordinator"
+     "coordinator",
+     "missed_checkins"
     ],
     "properties": {
      "generated_at": {
@@ -3153,6 +4003,30 @@
        "routed": {
         "type": "boolean",
         "description": "A deliverer reaches it."
+       }
+      }
+     },
+     "missed_checkins": {
+      "type": "array",
+      "description": "Open, late occurrences of recurrences with `checkin` (a job didn't report its run).",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "recurrence",
+        "occurrence",
+        "occurrence_at"
+       ],
+       "properties": {
+        "recurrence": {
+         "$ref": "#/components/schemas/RecurrenceId"
+        },
+        "occurrence": {
+         "$ref": "#/components/schemas/ItemId"
+        },
+        "occurrence_at": {
+         "$ref": "#/components/schemas/Timestamp"
+        }
        }
       }
      }

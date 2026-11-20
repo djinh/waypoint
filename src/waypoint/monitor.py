@@ -50,13 +50,18 @@ def status(store: Store) -> dict:
             "SELECT * FROM items WHERE state = 'running' AND updated_at < ? ORDER BY updated_at, num",
             (fmt(now - STALE_RUNNING),))]
         coordinator = _coordinator(store, c)
+        missed = [{"recurrence": f"R-{r['recurrence']}", "occurrence": item_id(r["num"]), "occurrence_at": r["occurrence_at"]}
+                  for r in c.execute("SELECT i.num, i.recurrence, i.occurrence_at FROM items i JOIN recurrences r "
+                                     "ON r.num = i.recurrence WHERE r.checkin = 1 AND i.late = 1 "
+                                     "AND i.state IN ('next','running','waiting') ORDER BY i.occurrence_at, i.num")]
     behind = last_pass is None or now - parse_ts(last_pass) > BEHIND
     ok = not (behind or any(d["silent"] for d in deliverers) or unreached or stuck or late or unknown or stale
-              or not coordinator["live"])
+              or not coordinator["live"] or missed)
     return {"generated_at": fmt(now), "version": __version__, "ok": ok,
             "scheduler": {"last_pass": last_pass, "behind": behind}, "deliverers": deliverers,
             "recipients_without_deliverer": unreached, "stuck_deliveries": stuck, "late_items": late,
-            "unknown_owners": unknown, "running_stale": stale, "coordinator": coordinator}
+            "unknown_owners": unknown, "running_stale": stale, "coordinator": coordinator,
+            "missed_checkins": missed}
 
 
 def _coordinator(store: Store, c) -> dict:

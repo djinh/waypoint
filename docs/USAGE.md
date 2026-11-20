@@ -62,11 +62,46 @@ Other commands: `wp ls` (filters `--owner`, `--track`, `--state`, `--waiting-on`
 `--answer-issue`/`--answer-session`; conditions with `--add-waits-on`, `--remove-waits-on`, or
 `--waits-on` to replace them all, `--waits-on ''` to clear), `wp drop ID REASON`, `wp tracks`,
 `wp track put ID …` (keeps a track archived or not unless `--archived`/`--no-archived` says),
-`wp messages` (my recent messages in full), `wp client …` (humans and coordinators), `wp health`.
+`wp messages` (my recent messages in full), `wp recur add|ls|show|update|pause|resume|stop` (recurrences) and
+`wp recur done|failed R-3 [--note]` (a job's check-in), `wp client …` (humans and coordinators), `wp health`.
+
+### Recurring items
+
+A recurrence gives its owner an ordinary item each time it falls due (schedules: `every 15m`,
+`daily 09:00`, `weekly mon,thu 06:40`, `monthly 1 04:30`, with an optional `tz Europe/Paris`):
+
+```console
+$ wp recur add "Morning review of open issues" --track release --schedule "daily 09:00" --label review
+R-1 [active] Morning review of open issues (builder, release) · daily 09:00 · next Sat 09:00
+$ wp recur ls
+R-1 [active] Morning review of open issues (builder, release) · daily 09:00 · next Sat 09:00
+```
+
+At 09:00 `builder` gets an item marked `(R-1)` and a wake-up; it closes it like any item. A job
+on a system timer checks in instead. As the coordinator, register the job's own client and a
+recurrence that expects its check-ins; the job's client may check in and do nothing else with it:
+
+```console
+$ wp client add backup-job --role agent --token-file backup-job.token
+$ wp recur add "Nightly backup" --track release --owner coordinator --schedule "daily 03:00" --checkin --checkin-by backup-job
+R-2 [active] Nightly backup (coordinator, release) · daily 03:00 · next Sat 03:00 · check-ins by backup-job
+```
+
+The backup script, after each run, as `backup-job`:
+
+```console
+$ WAYPOINT_NAME=backup-job wp recur done R-2 --note "backup ok, 41 MB"
+R-2: no open occurrence; recorded
+```
+
+(Run from the script after each backup, `wp recur done` closes that night's occurrence; here none
+was open yet, so it was only recorded.) A run that isn't reported within its window (`--window`,
+default 1 h) is late: the owner is nudged, then the coordinator, and `/v1/status` lists it under
+`missed_checkins`. `wp recur pause|resume|stop R-2` changes its state; `stopped` is final.
 
 ## The MCP tools (for agent sessions)
 
-`waypoint-mcp` gives an agent eight tools. How an agent session should work with them (when to
+`waypoint-mcp` gives an agent nine tools. How an agent session should work with them (when to
 call `wp_mine`, states, wake-up lines, questions for people, one item per unit of work) is in
 [AGENTS.md](AGENTS.md), with a block to paste into your agents' instructions.
 Answers are short text, one line per item, as above.
@@ -82,6 +117,7 @@ too), so such text never starts a line of its own.
 | `wp_update` | `id`, `state`, `note`, `due`, `wake`, `when`, `until`, `add_waits_on`, `waits_on`, `title`, `label`, `owner`, `answer_at`, `running_until` | Change one of my items; `''` clears a field. |
 | `wp_done` | `id`, `note` | Mark it done; Waypoint wakes whoever waited on it. |
 | `wp_ask` | `human`, `question`, `title`, `options`, `recommendation`, `for_item`, `track`, `due`, `answer_at`, `links` | Put a decision to a person and make my item wait on it, in one step. |
+| `wp_recur` | `id`, `title`, `track`, `schedule`, `owner`, `label`, `note`, `window`, `overlap`, `catch_up`, `checkin`, `checkin_by`, `state` | Create a recurrence (no `id`) or change, pause, resume or stop one; `schedule` as `every 15m`, `daily 09:00`, `weekly mon,thu 06:40`, `monthly 1 04:30`. `wp_get R-3` shows one; `wp_mine` lists mine under "Recurring". |
 | `wp_messages` | `limit`, `since` | My recent messages from Waypoint in full, newest first, with what became of each: what a short wake-up line only names. |
 
 A typical start of a session's turn after a restart:

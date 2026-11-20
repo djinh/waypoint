@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 OPEN = ("next", "running", "waiting")
@@ -42,6 +43,7 @@ class Scenario:
         self.done_days = spec.get("done_days", 3)
         self.tracks = spec["tracks"]
         self.clients = spec["clients"]
+        self.recurrences = spec.get("recurrences", [])
         self.raw = {it["id"]: it for it in spec["items"]}
         self.items = {}
         for iid in self.raw:
@@ -108,6 +110,8 @@ class Scenario:
             "updated_at": updated_at,
             "updated_by": raw.get("updated_by", raw["owner"]),
             "done_at": raw.get("done_at"),
+            "recurrence": None,
+            "occurrence_at": None,
         }
 
     def _answer_at(self, raw: dict) -> dict | None:
@@ -214,6 +218,25 @@ class Scenario:
         return sorted(ts_, key=lambda t: (t["order"], t["id"]))
 
     # -- views --------------------------------------------------------------------------
+    def _upcoming(self, to: datetime, live: set) -> list:
+        """The coming occurrences of the scenario's daily recurrences (wall-clock time in the zone)."""
+        out = []
+        zone = ZoneInfo(self.tz)
+        for r in self.recurrences:
+            if r["track"] not in live:
+                continue
+            hh, mm = (int(x) for x in r["daily"].split(":"))
+            day = self.now.astimezone(zone).date()
+            while True:
+                t = datetime(day.year, day.month, day.day, hh, mm, tzinfo=zone).astimezone(timezone.utc)
+                if t > to:
+                    break
+                if t > self.now:
+                    out.append({"recurrence": r["id"], "at": ts(t), "owner": r["owner"], "track": r["track"],
+                                "title": r["title"], "label": r.get("label")})
+                day += timedelta(days=1)
+        return sorted(out, key=lambda u: (u["at"], u["recurrence"]))
+
     def timeline(self, window_to_days: int = 9) -> dict:
         frm = self.now - timedelta(days=self.done_days)
         to = self.now + timedelta(days=window_to_days)
@@ -241,6 +264,7 @@ class Scenario:
             "owners": self._owners(items, tracks),
             "items": items,
             "edges": self._edges(order),
+            "upcoming": self._upcoming(to, live),
         }
 
     def for_human(self, human: str) -> dict:
@@ -276,6 +300,7 @@ class Scenario:
             "owners": self._owners(items, tracks),
             "items": items,
             "edges": self._edges(order),
+            "recurrences": [],
         }
 
 
@@ -302,6 +327,11 @@ SCENARIO = {
         "coordinator": {"role": "coordinator", "label": "Coordinator"},
         "alice": {"role": "human", "label": "Alice"},
     },
+    # a recurrence: an ordinary item for its owner every morning (only its coming occurrences show)
+    "recurrences": [
+        {"id": "R-1", "owner": "agent-b", "track": "build-infra", "title": "Morning build health check",
+         "label": "build check", "daily": "08:30"},
+    ],
     "tracks": [
         {"id": "release-2-4", "title": "Release 2.4", "lead": "agent-a", "order": 10},
         {"id": "build-infra", "title": "Build infrastructure", "lead": "agent-b", "order": 20},

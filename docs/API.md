@@ -30,7 +30,8 @@ do, they do through it.
 - **No missing fields** in responses: a field without a value is `null` or `[]`, so readers never
   have to tell "absent" from "empty".
 - **Compatibility:** within `/v1`, changes are additive (new fields, new endpoints, new enum
-  values on fields documented as open). Readers ignore fields they don't know.
+  values on fields documented as open, such as a delivery's `kind` and the event stream's event
+  types). Readers ignore fields, kinds and events they don't know.
 
 ## Items
 
@@ -202,6 +203,43 @@ their own items, on anyone's items. The caller's identity always comes from its 
 Who may write a track: any agent, human or coordinator may create a new one; an existing track is
 replaced only by its lead, a coordinator or a human. Readers and deliverers get `403 forbidden`.
 
+## Recurrences
+
+Recurring work (the design: [design/RECURRING.md](design/RECURRING.md)). A **recurrence** (`R-<n>`)
+is a template and a schedule; at each occurrence Waypoint creates an ordinary item (`W-<n>`) for its
+owner, with `recurrence` and `occurrence_at` set and `due_at` = the occurrence time + `window`, and
+wakes the owner (delivery kind `recurring`). Waypoint runs no commands.
+
+- `GET /v1/recurrences` (filters `owner`, `track`, `state`; default `active,paused`),
+  `POST /v1/recurrences`, `GET`/`PATCH /v1/recurrences/{id}`. Fields: the occurrence template
+  (`owner`, `track`, `title`, `label`, `kind` `task` or `event`, `note`, `links`, `overdue`), the
+  `schedule`, `window` (default `1h`), `overlap` (`skip`, the default; `replace`; `allow`),
+  `catch_up` (`latest`, the default; `none`), `checkin`, `checkin_by`, `state` (`active`, `paused`, `stopped`),
+  and Waypoint's `next_at`, `last_at` and `open_occurrence` (the oldest open occurrence). The content
+  check and the length limits are those of items, and so are permissions, with one difference: a
+  recurrence owned by a human is created and changed only by that human or a coordinator.
+- **Schedules:** `{"every": "15m"}` (at least `5m`; optional `from` anchor), `{"daily": "09:00"}`,
+  `{"weekly": ["mon", "thu"], "at": "06:40"}`, `{"monthly": 1, "at": "04:30"}` (1–28 or `"last"`).
+  Wall-clock times are in `tz` (default: the deployment's zone). A time that doesn't exist that day
+  fires at the first valid minute after it; a time that occurs twice fires once.
+- **Overlap:** when the next occurrence falls due while the previous one is open, `skip` adds a
+  history line to the open one, `replace` drops it ("superseded") and creates the new one, `allow`
+  creates both. **Catch-up** after Waypoint's own downtime: `latest` creates one late occurrence for
+  the missed span, saying how many were missed; `none` waits for the next.
+- **Pause, resume, stop:** a paused recurrence creates nothing and has `next_at: null`; resuming
+  starts from the next scheduled time. `stopped` is final. A recurrence whose owner is retired
+  pauses itself, and the coordinator is told.
+- **Missed runs:** an occurrence not done within its window is late and climbs the overdue ladder
+  (the recurrence's `overdue`, or the deployment's default), like any item.
+- **Check-ins** (`checkin: true`): a job that stays on a timer reports each run with
+  `POST /v1/recurrences/{id}/checkin` `{result: ok|failed, note?}`. `ok` closes the oldest open
+  occurrence as done, `failed` drops it (its owner is told), so a late run is never credited to a
+  newer one. The recurrence's owner is whoever acts on a missed run; the script checks in with its
+  own client, named in `checkin_by` (set by whoever may change the recurrence), which may only check
+  in; the owner, coordinators and humans may check in too. With no open occurrence the check-in is recorded
+  in the recurrence's history and answered with `occurrence: null`. Open, late occurrences of
+  check-in recurrences are listed in `/v1/status` as `missed_checkins`.
+
 ## Views
 
 The views are read models for pages: one request returns everything a page draws, with every flag,
@@ -242,6 +280,10 @@ Placing items in time is the page's job, from these fields:
 - `due_at` for deadlines; `wake_at` is the owner's own reminder and usually not drawn;
 - an item with neither `when` nor `due_at` is **undated**: it is drawn in dependency order only,
   never at a time. A page that wants to place it after what it waits on can follow the edges.
+- `upcoming`: the coming occurrences of active recurrences within the window (`recurrence`, `at`,
+  `owner`, `track`, `title`, `label`), at most 50 per recurrence, computed and never stored; an
+  occurrence becomes an item only when it falls due. Pages may draw them as faint markers (a short
+  interval over a long window shows only its first 50).
 
 ### `GET /v1/views/for/{human}`
 
@@ -256,6 +298,7 @@ For the "you first" page. `human` must be a client with role `human` (`404 not_f
   further back, with `depth`. Empty for ready entries.
 - `items` holds every item the entries name (the human's own, their chains, and any at-risk
   reasons), each once; `edges` are the dependencies among them; `tracks` are those items' tracks.
+- `recurrences`: the human's own recurrences (active and paused), by `next_at`.
 
 This view is deliberately only about the human's items. A page that also shows every owner's next
 dated items, or all tracks with their progress, reads `GET /v1/views/timeline` as well; the two
@@ -338,6 +381,7 @@ A message (`Delivery`):
 | `deliverer_silent` | coordinator | A deliverer has not fetched for 5 minutes. |
 | `outage` | coordinator | One summary after Waypoint was down: how long, and what was caught up. |
 | `running_check` | owner | A running item's `running_until` passed: still running? (Withdrawn by the owner's next update.) |
+| `recurring` | owner | An occurrence of a recurrence fell due: a new item for its owner. |
 
 A message for a recipient that has no deliverer goes to the coordinator, its text starting
 "For <recipient> (no deliverer registered): "; if the coordinator can't be reached either, it waits
@@ -397,8 +441,9 @@ needs one; any role that reads (agent, human, coordinator, reader) may read thes
   minutes after they fell due), `late_items`, `unknown_owners` (open items whose owner isn't a
   registered client any more) and `running_stale` (running for more than a day without an
   update), and `coordinator` (`name`, `live`, `routed`: who hears about escalations, whether it is a
-  registered, unretired coordinator, and whether a deliverer reaches it). `ok` is true only when all
-  of these lists are empty, the scheduler isn't behind and there is a live coordinator.
+  registered, unretired coordinator, and whether a deliverer reaches it), and `missed_checkins`
+  (open, late occurrences of recurrences with `checkin`). `ok` is true only when all of these lists
+  are empty, the scheduler isn't behind and there is a live coordinator.
 - `GET /metrics`: the same as counts in the Prometheus text format (`waypoint_items{state=…}`,
   `waypoint_items_late`, `waypoint_items_at_risk`, `waypoint_messages_waiting`,
   `waypoint_deliveries_stuck`, `waypoint_deliverer_last_seen_seconds{deliverer=…}`,
@@ -424,7 +469,7 @@ request body or a token.
 
 ## Not in this document yet
 
-Nothing at the moment: every endpoint of the design is described above.
+Nothing: every endpoint of the design is described above.
 
 ## Examples
 

@@ -41,8 +41,8 @@ waiting for them.
 ```
 
 - **`waypointd`**, one daemon with an HTTP API and an SQLite database. Everything goes through it.
-- **The MCP server** gives each agent session eight tools (list mine, list, get, add, update, done,
-  ask a person, read my messages).
+- **The MCP server** gives each agent session nine tools (list mine, list, get, add, update, done,
+  ask a person, read my messages, recurring items).
 - **`wp`** offers the same on the command line.
 - **Deliverers**, one per machine and user where recipients live, fetch the messages meant for them
   and hand each on: typed into a terminal, pushed to a phone, or posted to a URL.
@@ -102,6 +102,17 @@ hears it is at risk. A group sets a default ladder; an item may bring its own. T
 soon as the owner updates the item or anyone closes it; a new due time starts it afresh, and so does
 an owner who claimed the item as running and then went silent until the claim lapsed. Every step
 taken is recorded, so the history shows which kinds of work tend to slip.
+
+## Recurring work
+
+Work that comes back on a schedule is a **recurrence**: a template and a schedule (`daily 09:00`,
+`weekly mon,thu 06:40`, `every 2h`) in the group's time zone. Each time it falls due, Waypoint creates
+an ordinary item for its owner and wakes them, so recurring work has the same wake-ups, ladder,
+history and pages as everything else, and survives restarts. If the previous one is still open, the
+next is skipped by default. After Waypoint's own downtime, one late occurrence stands for the missed
+ones. A job that stays on a system timer (a backup, a prune) **checks in** after each run; a run that
+doesn't check in within its window is late and climbs the ladder like any item. Waypoint itself still
+runs nothing. The details are in [design/RECURRING.md](design/RECURRING.md).
 
 ## Messages and delivery
 

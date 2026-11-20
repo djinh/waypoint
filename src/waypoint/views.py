@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
+from . import recur
+from .recurrences import Recurrences
 from .store import OPEN, Store, item_num
 from .timeutil import fmt, parse_ts
 
@@ -67,6 +70,23 @@ def _all_items(store: Store) -> dict[str, dict]:
     return {it["id"]: it for it in store.items()}
 
 
+def _upcoming(store: Store, now: datetime, frm: datetime, to: datetime, shown: set[str]) -> list[dict]:
+    """The coming occurrences of active recurrences in the shown tracks, within the window: computed,
+    never stored (an occurrence becomes an item only when it falls due)."""
+    out = []
+    with store.read() as c:
+        rows = c.execute("SELECT * FROM recurrences WHERE state = 'active'").fetchall()
+    for r in rows:
+        if r["track"] not in shown:
+            continue
+        after = max(now, frm) - timedelta(microseconds=1)  # the next one may be due right now
+        for t in recur.between(json.loads(r["schedule"]), after, to, parse_ts(r["created_at"]), store.settings.tz,
+                               limit=50):
+            out.append({"recurrence": f"R-{r['num']}", "at": fmt(t), "owner": r["owner"], "track": r["track"],
+                        "title": r["title"], "label": r["label"]})
+    return sorted(out, key=lambda u: (u["at"], u["recurrence"]))
+
+
 def timeline(store: Store, frm: datetime | None = None, to: datetime | None = None,
              track_ids: list[str] | None = None) -> dict:
     now = store.now()
@@ -101,6 +121,7 @@ def timeline(store: Store, frm: datetime | None = None, to: datetime | None = No
         "owners": _owners(store, out_items, tracks),
         "items": out_items,
         "edges": _edges(items, order),
+        "upcoming": _upcoming(store, now, frm, to, shown),
     }
 
 
@@ -160,4 +181,5 @@ def for_human(store: Store, human: str) -> dict:
         "owners": _owners(store, out_items, tracks),
         "items": out_items,
         "edges": _edges(items, order),
+        "recurrences": Recurrences.of(store).list(owner=human),
     }

@@ -11,9 +11,11 @@ questions only they can answer.
   for it.
 - **Wake-ups and an overdue ladder**: reminders, "you can start", "please re-plan", nudges and
   escalations to a coordinator, caught up correctly after downtime.
+- **Recurring work**: a schedule that gives its owner an ordinary item each time (`daily 09:00`,
+  `every 2h`), and check-ins for jobs that stay on a timer, so a missed run is noticed.
 - **Delivery** into an agent's terminal (tmux, only into an empty input box and never over a
   person's typing), as a push notification, or as a webhook.
-- **Interfaces**: an HTTP API, eight MCP tools for agent sessions, and the `wp` command line.
+- **Interfaces**: an HTTP API, nine MCP tools for agent sessions, and the `wp` command line.
 - **Safe defaults**: listens on localhost, a token on every request, the daemon never runs a
   command (the deliverer only calls `tmux` to type a line), refuses text that looks like secrets or
   addresses.
@@ -39,6 +41,7 @@ export WAYPOINT_NAME=alice WAYPOINT_TOKEN_FILE=alice.token
 | | |
 | --- | --- |
 | [docs/DESIGN-OVERVIEW.md](docs/DESIGN-OVERVIEW.md) | How it works and why: items, conditions, time, delivery, failures, roles |
+| [docs/design/RECURRING.md](docs/design/RECURRING.md) | Recurring items and check-ins: the design |
 | [docs/INSTALL.md](docs/INSTALL.md) | Installing on a server from scratch: daemon, clients, deliverers, MCP, backups, monitoring, upgrades |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, its default and where it is set |
 | [docs/USAGE.md](docs/USAGE.md) | Using it: `wp`, the MCP tools, the HTTP API, what the adapters send, with worked examples |

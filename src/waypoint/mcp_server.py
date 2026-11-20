@@ -1,4 +1,4 @@
-"""waypoint-mcp: Waypoint's eight MCP tools, for one agent session, over the HTTP API.
+"""waypoint-mcp: Waypoint's nine MCP tools, for one agent session, over the HTTP API.
 
 The agent's client starts it per session (stdio). Configuration comes from the environment:
 
@@ -24,7 +24,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
-from .present import InputError, answer_line, flat, item_id, message_line, line, local, to_answer_at, to_condition, to_ts, to_when
+from .present import InputError, answer_line, flat, item_id, message_line, recurrence_id, recurrence_line, to_schedule, line, local, to_answer_at, to_condition, to_ts, to_when
 from .schema import limits
 
 INSTRUCTIONS = ("Waypoint keeps your open items, what waits on what, and wakes you at the right time. "
@@ -39,6 +39,8 @@ TitleOpt = Annotated[str | None, Field(description=f"one line, at most {_L['titl
 Label = Annotated[str | None, Field(description=f"short form for tight places, at most {_L['label']} characters")]
 Note = Annotated[str | None, Field(description=f"one line of status, at most {_L['note']} characters")]
 NoteReq = Annotated[str, Field(description=f"closing note, at most {_L['note']} characters")]
+ScheduleText = Annotated[str | None, Field(description="'every 15m', 'daily 09:00', 'weekly mon,thu 06:40' or "
+                                                       "'monthly 1 04:30'; optional 'tz Europe/Paris' at the end")]
 QuestionText = Annotated[str, Field(description=f"at most {_L['question']} characters")]
 Options = Annotated[list[str] | None,
                     Field(description=f"at most {_L['options']} options of at most {_L['option']} characters")]
@@ -88,9 +90,7 @@ def build(client: WaypointClient, me: str) -> MCPServer:
                              "Call after every restart or compaction.", structured_output=False)
     def wp_mine() -> str:
         items = api("GET", "/v1/items", query={"owner": me})["items"]
-        if not items:
-            return f"No open items for {me}."
-        out = [f"Open items of {me}:"]
+        out = [f"Open items of {me}:"] if items else [f"No open items for {me}."]
         horizon = datetime.now(timezone.utc) + timedelta(hours=24)
         soon = []
         for it in items:
@@ -106,6 +106,15 @@ def build(client: WaypointClient, me: str) -> MCPServer:
         if soon:
             out.append("Next 24 hours:")
             out.extend("  " + s for _, s in sorted(soon))
+        try:
+            recs = api("GET", "/v1/recurrences", query={"owner": me})["recurrences"]
+        except ToolError as e:  # a Waypoint from before recurrences (e.g. during an upgrade): none
+            if not str(e).startswith("not_found"):
+                raise
+            recs = []
+        if recs:
+            out.append("Recurring:")
+            out.extend("  " + recurrence_line(r) for r in recs)
         return "\n".join(out)
 
     @tool(description="List items. Filters: owner, track, state (comma list or 'all'), waiting_on "
@@ -122,6 +131,14 @@ def build(client: WaypointClient, me: str) -> MCPServer:
     @tool(description="One item in full, with what waits on it and its recent history.",
                  structured_output=False)
     def wp_get(id: str) -> str:
+        if id.strip().upper().startswith("R-"):
+            r = api("GET", f"/v1/recurrences/{recurrence_id(id)}")
+            out = [recurrence_line(r)]
+            for k in ("label", "note"):
+                if r.get(k):
+                    out.append(f"{k}: {r[k]}")
+            out.append(f"window {r['window']} · overlap {r['overlap']} · catch-up {r['catch_up']}")
+            return "\n".join(out)
         it = get(id)
         out = [line(it)]
         if it.get("label"):
@@ -248,6 +265,24 @@ def build(client: WaypointClient, me: str) -> MCPServer:
             body["due_at"] = to_ts(due)
         asked = api("POST", "/v1/items", body)
         return f"Asked {human}: {asked['id']} {asked['title']}."
+
+    @tool(description="Create (no id: title, track, schedule) or change a recurrence, a schedule that gives its "
+                      "owner an item each time. state: active|paused|stopped (final).", structured_output=False)
+    def wp_recur(id: str | None = None, title: TitleOpt = None, track: str | None = None,
+                 schedule: ScheduleText = None, owner: str | None = None, label: Label = None, note: Note = None,
+                 window: str | None = None, overlap: str | None = None, catch_up: str | None = None,
+                 checkin: bool | None = None, checkin_by: str | None = None, state: str | None = None) -> str:
+        body = {k: v for k, v in (("title", title), ("track", track), ("owner", owner), ("label", label),
+                                  ("note", note), ("window", window), ("overlap", overlap), ("catch_up", catch_up),
+                                  ("checkin", checkin), ("checkin_by", checkin_by), ("state", state)) if v is not None}
+        if schedule:
+            body["schedule"] = to_schedule(schedule)
+        if id:
+            r = api("PATCH", f"/v1/recurrences/{recurrence_id(id)}", body)
+        else:
+            body.pop("state", None)
+            r = api("POST", "/v1/recurrences", body)
+        return recurrence_line(r)
 
     @tool(description="My recent messages from Waypoint in full, newest first: what a short wake-up line only "
                       "names (an outage summary, an undeliverable message), with what became of each.",

@@ -93,7 +93,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-09T15:10:00Z",
       "updated_by": "agent-a",
-      "done_at": "2026-03-09T15:10:00Z"
+      "done_at": "2026-03-09T15:10:00Z",
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-105",
@@ -146,7 +148,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-09T17:40:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-107",
@@ -178,7 +182,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-08T11:20:00Z",
       "updated_by": "agent-a",
-      "done_at": "2026-03-08T11:20:00Z"
+      "done_at": "2026-03-08T11:20:00Z",
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-102",
@@ -222,7 +228,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-09T16:00:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-103",
@@ -272,7 +280,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:06:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-104",
@@ -350,7 +360,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:08:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-106",
@@ -394,7 +406,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:10:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-111",
@@ -448,7 +462,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-08T11:00:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-112",
@@ -486,7 +502,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-09T12:00:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-113",
@@ -528,7 +546,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-09T12:30:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-114",
@@ -560,7 +580,9 @@
       "created_by": "coordinator",
       "updated_at": "2026-03-05T09:00:00Z",
       "updated_by": "coordinator",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-110",
@@ -600,7 +622,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-05T14:00:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-121",
@@ -632,7 +656,9 @@
       "created_by": "agent-c",
       "updated_at": "2026-03-09T08:00:00Z",
       "updated_by": "agent-c",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-120",
@@ -670,7 +696,9 @@
       "created_by": "agent-c",
       "updated_at": "2026-03-08T11:05:00Z",
       "updated_by": "agent-c",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     }
   ],
   "edges": [
@@ -713,6 +741,80 @@
       "from": "W-111",
       "to": "W-120",
       "met": false
+    }
+  ],
+  "upcoming": [
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-11T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-12T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-13T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-14T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-15T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-16T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-17T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-18T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
+    },
+    {
+      "recurrence": "R-1",
+      "at": "2026-03-19T07:30:00Z",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Morning build health check",
+      "label": "build check"
     }
   ]
 }

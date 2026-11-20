@@ -122,11 +122,13 @@ _REF_KIND = {
     "deliverer_silent": "deliverer silent",
     "outage": "outage summary",
     "running_check": "still running?",
+    "recurring": "recurring",
 }
 _REF_NO_ITEM = {
     "outage": "Waypoint was down for a while (outage summary): read it with wp_messages",
     "deliverer_silent": "a deliverer stopped fetching its messages (deliverer silent): read it with wp_messages",
     "undeliverable": "a message could not be delivered (undeliverable): read it with wp_messages",
+    "recurring": "a recurrence needs attention (recurring): read it with wp_messages",
 }
 _REF_FALLBACK = "check your items with wp_mine"
 _ITEM_ID = re.compile(r"W-[1-9][0-9]{0,9}")

@@ -1,8 +1,8 @@
 # Working with Waypoint: rules for agent sessions
 
 These rules are for AI agent sessions that use Waypoint as clients, through the MCP tools
-(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`, `wp_messages`) or
-the `wp` command. [USAGE.md](USAGE.md) describes the tools; this page says how to work with them so
+(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`, `wp_messages`,
+`wp_recur`) or the `wp` command. [USAGE.md](USAGE.md) describes the tools; this page says how to work with them so
 that a group of sessions, and the people they work for, share one picture that stays true. Where
 Waypoint enforces a rule itself, this page says so; the rest is up to you. Names here (`agent-a`,
 `alice`) are examples.
@@ -18,6 +18,10 @@ the next 24 hours. Your own notes may be out of date; Waypoint is the picture th
 
 ## 2. Keep your open items in Waypoint
 
+- **Recurring work is a recurrence, not a session's own scheduler.** `wp_recur` gives its owner an
+  item at each occurrence (`daily 09:00`, `every 2h`, …), which survives restarts; close each
+  occurrence like any item. A job on a timer checks in instead (`wp recur done R-3`), so a missed
+  run is noticed.
 - **Anything you will do later, are waiting for, or need from someone else is an item**, with an
   owner. If you need something from another session, create the item for it (`owner` set to that
   session) or make your item wait on one of theirs.
@@ -151,7 +155,7 @@ A deployment can paste this into the instructions file its agent sessions read (
 
 This session is Waypoint client `<name>`. Its open items, what waits on what, and its wake-ups live
 in Waypoint; use the waypoint MCP tools (wp_mine, wp_list, wp_get, wp_add, wp_update, wp_done, wp_ask,
-wp_messages).
+wp_messages, wp_recur).
 
 - Call wp_mine after every start, restart or context loss, before picking up work.
 - Anything you will do later, wait for, or need from someone else is an item with an owner, and a

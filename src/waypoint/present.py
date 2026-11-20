@@ -11,11 +11,12 @@ class InputError(ValueError):
     """Something typed that isn't a time, an item id or a day."""
 
 
-_ITEM = re.compile(r"^W-[1-9][0-9]*$")
-_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ITEM = re.compile(r"W-[1-9][0-9]*\Z")
+_RECURRENCE = re.compile(r"R-[1-9][0-9]*\Z")
+_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 
 
-_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,47}\Z")
 # Control characters and line and paragraph separators. Text other clients wrote (titles, notes,
 # questions, links) is shown with these as spaces, so it can never start a line of its own, e.g. one
 # that looks like a "[waypoint]" wake-up, in an agent's tool output or a terminal.
@@ -38,6 +39,14 @@ def item_id(value: str) -> str:
     v = (value or "").strip()
     if not _ITEM.match(v):
         raise InputError(f"not an item id: {value!r} (like W-12)")
+    return v
+
+
+def recurrence_id(value: str) -> str:
+    """A recurrence id, checked before it goes into a URL (ASCII digits only, nothing after)."""
+    v = (value or "").strip().upper()
+    if not _RECURRENCE.match(v):
+        raise InputError(f"not a recurrence id: {value!r} (like R-3)")
     return v
 
 
@@ -89,7 +98,8 @@ def line(it: dict) -> str:
     """One item on one line: id, state and flags, title, owner, times, note."""
     flags = "".join([" LATE" if it["late"] else "", " AT-RISK" if it["at_risk"] else "",
                      " RUNNING?" if it.get("running_overdue") else ""])
-    bits = [f"{it['id']} [{it['state']}{flags}] {it['title']} ({it['owner']}, {it['track']})"]
+    rec = f" ({it['recurrence']})" if it.get("recurrence") else ""
+    bits = [f"{it['id']} [{it['state']}{flags}] {it['title']}{rec} ({it['owner']}, {it['track']})"]
     if it.get("running_until"):
         bits.append(f"running until {local(it['running_until'])}")
     if it.get("due_at"):
@@ -131,4 +141,57 @@ def message_line(m: dict) -> str:
     """One of my messages on one line: id, when it fell due, kind, what became of it, and its text."""
     about = f" {m['item']}" if m.get("item") else ""
     return f"{m['id']} {local(m['fell_due_at'])} {m['kind']}{about} ({m['state']}) · {m['text']}"
+
+
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def to_schedule(text: str) -> dict:
+    """A schedule as people type it: "every 15m", "daily 09:00", "weekly mon,thu 06:40",
+    "monthly 1 04:30" or "monthly last 23:00", each optionally ending in "tz Europe/Paris"."""
+    words = (text or "").split()
+    tz = None
+    if len(words) >= 2 and words[-2] == "tz":
+        tz, words = words[-1], words[:-2]
+    try:
+        kind = words[0]
+        if kind == "every" and len(words) == 2:
+            return {"every": words[1]}
+        if kind == "daily" and len(words) == 2:
+            out = {"daily": words[1]}
+        elif kind == "weekly" and len(words) == 3:
+            out = {"weekly": words[1].split(","), "at": words[2]}
+        elif kind == "monthly" and len(words) == 3:
+            out = {"monthly": words[1] if words[1] == "last" else int(words[1]), "at": words[2]}
+        else:
+            raise ValueError
+    except (IndexError, ValueError):
+        raise InputError(f"not a schedule: {text!r} (like 'every 15m', 'daily 09:00', 'weekly mon,thu 06:40', "
+                         "'monthly 1 04:30', with an optional 'tz Europe/Paris')") from None
+    if tz:
+        out["tz"] = tz
+    return out
+
+
+def schedule_text(s: dict) -> str:
+    if "every" in s:
+        return f"every {s['every']}"
+    tz = f" tz {s['tz']}" if s.get("tz") else ""
+    if "daily" in s:
+        return f"daily {s['daily']}{tz}"
+    if "weekly" in s:
+        return f"weekly {','.join(s['weekly'])} {s['at']}{tz}"
+    return f"monthly {s['monthly']} {s['at']}{tz}"
+
+
+def recurrence_line(r: dict) -> str:
+    """One recurrence on one line: id, state, title, owner, schedule, next time, open occurrence."""
+    bits = [f"{r['id']} [{r['state']}] {r['title']} ({r['owner']}, {r['track']})", schedule_text(r["schedule"])]
+    if r.get("next_at"):
+        bits.append(f"next {local(r['next_at'])}")
+    if r.get("open_occurrence"):
+        bits.append(f"open {r['open_occurrence']}")
+    if r.get("checkin"):
+        bits.append("check-ins" + (f" by {r['checkin_by']}" if r.get("checkin_by") else ""))
+    return " · ".join(bits)
 

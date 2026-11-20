@@ -17,7 +17,7 @@ TEXT_MAX = 1000
 SUMMARY_MAX = 140
 # Every kind of message Waypoint sends (the contract's Delivery.kind); a test keeps the code to these.
 KINDS = ("wake", "unblocked", "replan", "at_risk", "nudge", "escalate", "notify", "undeliverable",
-         "deliverer_silent", "outage", "running_check")
+         "deliverer_silent", "outage", "running_check", "recurring")
 
 
 def _cut(text: str, n: int) -> str:

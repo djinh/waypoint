@@ -158,6 +158,47 @@ MIGRATIONS: list[str] = [
         AND recipient IN (SELECT name FROM clients WHERE retired_at IS NOT NULL);
     UPDATE clients SET deliverer = NULL WHERE retired_at IS NOT NULL
     """,
+    # 7: recurring items (docs/design/RECURRING.md): recurrences, their history, and occurrences on items
+    """
+    CREATE TABLE recurrences (
+        num         INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner       TEXT NOT NULL,
+        track       TEXT NOT NULL REFERENCES tracks(id),
+        title       TEXT NOT NULL,
+        label       TEXT,
+        kind        TEXT NOT NULL CHECK (kind IN ('task','event')),
+        note        TEXT,
+        links       TEXT NOT NULL DEFAULT '[]',
+        overdue     TEXT NOT NULL DEFAULT '[]',
+        schedule    TEXT NOT NULL,
+        window_len  TEXT NOT NULL DEFAULT '1h',
+        overlap     TEXT NOT NULL DEFAULT 'skip' CHECK (overlap IN ('skip','replace','allow')),
+        catch_up    TEXT NOT NULL DEFAULT 'latest' CHECK (catch_up IN ('latest','none')),
+        checkin     INTEGER NOT NULL DEFAULT 0,
+        checkin_by  TEXT,
+        state       TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','paused','stopped')),
+        next_at     TEXT,
+        last_at     TEXT,
+        version     INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL,
+        created_by  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL,
+        updated_by  TEXT
+    );
+    CREATE INDEX recurrences_due ON recurrences(state, next_at);
+    CREATE TABLE recurrence_history (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        recurrence  INTEGER NOT NULL REFERENCES recurrences(num),
+        at          TEXT NOT NULL,
+        by          TEXT,
+        event       TEXT NOT NULL,
+        changes     TEXT,
+        note        TEXT
+    );
+    ALTER TABLE items ADD COLUMN recurrence INTEGER REFERENCES recurrences(num);
+    ALTER TABLE items ADD COLUMN occurrence_at TEXT;
+    CREATE INDEX items_recurrence ON items(recurrence, state)
+    """,
 ]
 
 

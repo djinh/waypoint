@@ -47,7 +47,8 @@ def test_one_source():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'dynamic = ["version"]' in text and 'path = "src/waypoint/__init__.py"' in text
     assert not re.search(r'^version\s*=', text, re.M)
-    assert re.fullmatch(r"\d+\.\d+\.\d+", waypoint.__version__)
+    # X.Y.Z, or a pre-release of one while a major version is built (2.0.0a1), as PEP 440 writes it
+    assert re.fullmatch(r"\d+\.\d+\.\d+((a|b|rc)\d+)?", waypoint.__version__)
 
 
 def test_code_changes_bump_the_version():

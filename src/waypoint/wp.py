@@ -30,7 +30,7 @@ import sys
 from . import __version__
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
 from .present import (InputError, answer_line, client_name, flat, item_id, line, local, message_line,
-                      to_condition, to_ts, to_when)
+                      recurrence_id, recurrence_line, to_condition, to_schedule, to_ts, to_when)
 from .schema import limits
 from .server import issue_token
 
@@ -123,6 +123,36 @@ def parser() -> argparse.ArgumentParser:
     ask_where.add_argument("--answer-issue", metavar="URL",
                            help="answered as a comment on this issue or PR (needed if --link names one)")
     ask_where.add_argument("--answer-session", metavar="NAME", help="answered in this session (client name)")
+
+    rc = sub.add_parser("recur", help="recurrences: a schedule that gives its owner an item each time").add_subparsers(
+        dest="action", required=True)
+    ra = rc.add_parser("add")
+    ra.add_argument("title")
+    ra.add_argument("--track", required=True)
+    for sp in (ra, rc.add_parser("update")):
+        if sp is not ra:
+            sp.add_argument("id")
+            sp.add_argument("--title")
+            sp.add_argument("--track")
+        sp.add_argument("--schedule", required=sp is ra,
+                        help="'every 15m', 'daily 09:00', 'weekly mon,thu 06:40', 'monthly 1 04:30' (+ 'tz Zone')")
+        sp.add_argument("--owner")
+        sp.add_argument("--label")
+        sp.add_argument("--note")
+        sp.add_argument("--window", help="how long an occurrence may take, e.g. 1h")
+        sp.add_argument("--overlap", choices=["skip", "replace", "allow"])
+        sp.add_argument("--catch-up", choices=["latest", "none"])
+        sp.add_argument("--checkin", action=argparse.BooleanOptionalAction, default=None)
+        sp.add_argument("--checkin-by", help="the client a job checks in as")
+    rl = rc.add_parser("ls")
+    rl.add_argument("--owner")
+    rl.add_argument("--state", help="comma-separated: active, paused, stopped; or all")
+    for name in ("show", "pause", "resume", "stop"):
+        rc.add_parser(name).add_argument("id")
+    for name in ("done", "failed"):
+        sp = rc.add_parser(name, help=f"a job reports a run as {name}")
+        sp.add_argument("id")
+        sp.add_argument("--note")
 
     msgs = sub.add_parser("messages", help="my recent messages from Waypoint, in full, newest first")
     msgs.add_argument("--limit", type=int, default=10)
@@ -312,6 +342,8 @@ def run(args, out, err=None) -> int:
                 body["due_at"] = to_ts(args.due)
             asked = api("POST", "/v1/items", body)
             show(asked, line(asked))
+    elif args.cmd == "recur":
+        return run_recur(args, api, show)
     elif args.cmd == "messages":
         query = {"limit": args.limit}
         if args.since:
@@ -333,6 +365,41 @@ def run(args, out, err=None) -> int:
         show(t, f"{t['id']}: {t['title']}")
     elif args.cmd == "client":
         return run_client(args, api, show, err)
+    return 0
+
+
+def run_recur(args, api, show) -> int:
+    rid = recurrence_id
+
+    if args.action in ("add", "update"):
+        body = {k: getattr(args, a) for k, a in (("title", "title"), ("track", "track"), ("owner", "owner"),
+                                                 ("label", "label"), ("note", "note"), ("window", "window"),
+                                                 ("overlap", "overlap"), ("catch_up", "catch_up"),
+                                                 ("checkin", "checkin"), ("checkin_by", "checkin_by"))
+                if getattr(args, a, None) is not None}
+        if args.schedule:
+            body["schedule"] = to_schedule(args.schedule)
+        r = api("POST", "/v1/recurrences", body) if args.action == "add" else \
+            api("PATCH", f"/v1/recurrences/{rid(args.id)}", body)
+        show(r, recurrence_line(r))
+    elif args.action == "ls":
+        q = {"owner": args.owner, "state": args.state}
+        got = api("GET", "/v1/recurrences", query={k: v for k, v in q.items() if v})
+        show(got, "\n".join(recurrence_line(r) for r in got["recurrences"]) or "No recurrences.")
+    elif args.action == "show":
+        r = api("GET", f"/v1/recurrences/{rid(args.id)}")
+        show(r, recurrence_line(r))
+    elif args.action in ("pause", "resume", "stop"):
+        state = {"pause": "paused", "resume": "active", "stop": "stopped"}[args.action]
+        r = api("PATCH", f"/v1/recurrences/{rid(args.id)}", {"state": state})
+        show(r, recurrence_line(r))
+    else:  # done, failed: a check-in
+        body = {"result": "ok" if args.action == "done" else "failed"}
+        if args.note:
+            body["note"] = args.note
+        got = api("POST", f"/v1/recurrences/{rid(args.id)}/checkin", body)
+        occ = got["occurrence"]
+        show(got, (line(occ) if occ else f"{got['recurrence']['id']}: no open occurrence; recorded"))
     return 0
 
 

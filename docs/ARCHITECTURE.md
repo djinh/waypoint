@@ -19,7 +19,7 @@ in [API.md](API.md) and [api/openapi.yaml](api/openapi.yaml).
 | `deliveries.py` | Handing messages to deliverers: the queue per deliverer, leases, the long-poll and its thread-safe signal, acknowledgements, withdrawal of stale messages, silent deliverers. |
 | `client.py` | A small client for the API (standard library only), shared by the deliverer, the MCP server and `wp`. The token comes from a file and goes only into the Authorization header. |
 | `deliver.py` | `waypoint-deliver`, the deliverer: long-polls its queue, hands each message to its recipient's adapter, retries, gives up after 30 minutes, confirms. |
-| `mcp_server.py` | `waypoint-mcp`, the MCP server for one agent session: eight tools over the API (official MCP Python SDK, stdio). |
+| `mcp_server.py` | `waypoint-mcp`, the MCP server for one agent session: nine tools over the API (official MCP Python SDK, stdio). |
 | `wp.py` | `wp`, the command line: the same operations for scripts and humans, plus tracks and clients. |
 | `present.py` | Shared by the MCP server and `wp`: reading times, conditions and ids people type; one-line items. |
 | `adapters.py` | The adapters: `tmux` (types into an empty input box only), `push` (the summary only), `webhook` (the delivery as JSON). |
@@ -29,6 +29,8 @@ in [API.md](API.md) and [api/openapi.yaml](api/openapi.yaml).
 | `db.py` | SQLite connection settings and the numbered migrations. |
 | `clock.py`, `timeutil.py` | The time source (faked in tests) and timestamp/day parsing. |
 | `errors.py` | `ApiError` and the error codes. |
+| `recur.py` | Schedules of recurring items: checking them, and the next occurrence in a zone (pure). |
+| `recurrences.py` | Recurrences: create, read, change, pause, stop; who may do which; their history; retirement. |
 
 ## Data
 
@@ -183,8 +185,8 @@ tmux, server or pane means "try again later". Failure reasons never quote the pa
 
 `waypoint-mcp` is started by the agent's client for each session, over stdio. It reads the
 session's client name from `WAYPOINT_NAME`, the API's address from `WAYPOINT_URL` and the token
-from `WAYPOINT_TOKEN_FILE` (default `~/.config/waypoint/tokens/<name>.token`). Its eight tools
-(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`, `wp_messages`) each make one to a
+from `WAYPOINT_TOKEN_FILE` (default `~/.config/waypoint/tokens/<name>.token`). Its nine tools
+(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`, `wp_messages`, `wp_recur`) each make one to a
 few API calls and answer in short text, one line per item; descriptions stay under 200 characters
 because they cost context in every session. Its only conveniences are on input: item ids and times
 as plain strings (a time without a zone is read in the machine's local zone), a day for `when`, and

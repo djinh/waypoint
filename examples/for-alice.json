@@ -157,7 +157,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-09T17:40:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-102",
@@ -201,7 +203,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-09T16:00:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-103",
@@ -251,7 +255,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:06:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-104",
@@ -329,7 +335,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:08:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-106",
@@ -373,7 +381,9 @@
       "created_by": "agent-a",
       "updated_at": "2026-03-06T10:10:00Z",
       "updated_by": "agent-a",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-111",
@@ -427,7 +437,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-08T11:00:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-114",
@@ -459,7 +471,9 @@
       "created_by": "coordinator",
       "updated_at": "2026-03-05T09:00:00Z",
       "updated_by": "coordinator",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-110",
@@ -499,7 +513,9 @@
       "created_by": "agent-b",
       "updated_at": "2026-03-05T14:00:00Z",
       "updated_by": "agent-b",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     },
     {
       "id": "W-120",
@@ -537,7 +553,9 @@
       "created_by": "agent-c",
       "updated_at": "2026-03-08T11:05:00Z",
       "updated_by": "agent-c",
-      "done_at": null
+      "done_at": null,
+      "recurrence": null,
+      "occurrence_at": null
     }
   ],
   "edges": [
@@ -576,5 +594,6 @@
       "to": "W-120",
       "met": false
     }
-  ]
+  ],
+  "recurrences": []
 }

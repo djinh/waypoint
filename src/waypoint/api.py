@@ -20,6 +20,7 @@ from starlette.routing import Match, Route
 
 from . import __version__, monitor, schema, views
 from .deliveries import Deliveries
+from .recurrences import Recurrences
 from .events import MAX_STREAMS, Broadcaster
 from .errors import ApiError
 from .store import CLOSED, OPEN, Client, Store
@@ -103,6 +104,7 @@ def _need(caller: Client, roles) -> None:
 def create_app(store: Store, scheduler=None) -> "ErrorGuard":
     """The app; with a scheduler, its loop runs for the app's lifetime."""
     deliveries = Deliveries.of(store)
+    recurrences = Recurrences.of(store)
     broadcaster = Broadcaster.of(store)
     if scheduler is not None and deliveries.check_silent not in scheduler.pass_hooks:
         scheduler.pass_hooks.append(deliveries.check_silent)
@@ -212,6 +214,39 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         got = await deliveries.long_poll(caller, wait, limit, call)
         return JSONResponse({"deliveries": got, "lease_seconds": store.settings.lease_seconds})
 
+    async def list_recurrences(request: Request):
+        _need(caller_of(request), READERS)
+        q = _query(request, {"owner", "track", "state"})
+        raw = q.get("state", "active,paused")
+        states = None if raw == "all" else tuple(s for s in raw.split(",") if s)
+        if states is not None and (not states or set(states) - {"active", "paused", "stopped"}):
+            raise ApiError("invalid", "state: active, paused, stopped (comma-separated), or all", field="state")
+        got = await call(recurrences.list, q.get("owner"), q.get("track"), states)
+        return JSONResponse({"recurrences": got})
+
+    async def create_recurrence(request: Request):
+        caller = caller_of(request)
+        _query(request, set())
+        body = await _body(request)
+        return JSONResponse(await call(recurrences.create, caller, body), status_code=201)
+
+    async def get_recurrence(request: Request):
+        _need(caller_of(request), READERS)
+        _query(request, set())
+        return JSONResponse(await call(recurrences.get, request.path_params["id"]))
+
+    async def patch_recurrence(request: Request):
+        caller = caller_of(request)
+        _query(request, set())
+        body = await _body(request)
+        return JSONResponse(await call(recurrences.patch, caller, request.path_params["id"], body))
+
+    async def checkin_recurrence(request: Request):
+        caller = caller_of(request)
+        _query(request, set())
+        body = await _body(request)
+        return JSONResponse(await call(recurrences.checkin, caller, request.path_params["id"], body))
+
     async def my_messages(request: Request):
         caller = caller_of(request)
         _need(caller, READERS)
@@ -276,6 +311,11 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         Route("/v1/views/timeline", view_timeline, methods=["GET"]),
         Route("/v1/views/for/{human}", view_for, methods=["GET"]),
         Route("/v1/messages", my_messages, methods=["GET"]),
+        Route("/v1/recurrences", list_recurrences, methods=["GET"]),
+        Route("/v1/recurrences", create_recurrence, methods=["POST"]),
+        Route("/v1/recurrences/{id}", get_recurrence, methods=["GET"]),
+        Route("/v1/recurrences/{id}", patch_recurrence, methods=["PATCH"]),
+        Route("/v1/recurrences/{id}/checkin", checkin_recurrence, methods=["POST"]),
         Route("/v1/deliveries", get_deliveries, methods=["GET"]),
         Route("/v1/deliveries/{id}/ack", ack_delivery, methods=["POST"]),
         Route("/v1/events", events, methods=["GET"]),

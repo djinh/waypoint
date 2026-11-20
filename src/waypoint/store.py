@@ -97,6 +97,11 @@ def _ts_field(value: str | None, name: str) -> str | None:
         raise ApiError("invalid", f"{name}: not a valid time", field=name) from None
 
 
+# Waypoint's own writes (e.g. a recurrence's occurrences): no client checks, and recorded as Waypoint's
+# (history `by` and `updated_by` NULL; an occurrence's created_by is its owner).
+WAYPOINT = Client("", "coordinator", None)
+
+
 def item_id(num: int) -> str:
     return f"W-{num}"
 
@@ -129,10 +134,13 @@ class Store:
         # to an item; owner_update is True when the item's owner made it, or it made the item done or
         # dropped; changed is the set of fields the write changed.
         self.change_listeners: list = []
+        # Called as fn(c, name) inside the transaction that retires client NAME.
+        self.retire_listeners: list = []
         # Called as fn(item_nums, track_ids) after a transaction that changed them has committed.
         self.commit_listeners: list = []
         self._touched_items: set[int] = set()
         self._touched_tracks: set[str] = set()
+        self.touched_recurrences: set[int] = set()  # read by commit listeners, for the event stream
 
     # ------------------------------------------------------------------ transactions
     @contextmanager
@@ -144,6 +152,7 @@ class Store:
                 return
             self.conn.execute("BEGIN IMMEDIATE")
             self._touched_items, self._touched_tracks = set(), set()
+            self.touched_recurrences = set()
             # the client whose write this transaction is (None for Waypoint's own, e.g. a scheduler pass)
             self.actor = None
             try:
@@ -154,7 +163,7 @@ class Store:
                     self.conn.execute("ROLLBACK")
                 raise
             items, tracks = self._touched_items, self._touched_tracks
-            if items or tracks:
+            if items or tracks or self.touched_recurrences:
                 for fn in self.commit_listeners:
                     try:
                         fn(items, tracks)
@@ -338,6 +347,8 @@ class Store:
             if cur.rowcount:
                 log.warning("%d message(s) for retired client %s withdrawn: no coordinator to take them",
                             cur.rowcount, name)
+            for fn in self.retire_listeners:
+                fn(c, name)
 
     def authenticate(self, token: str | None) -> Client | None:
         if not token:
@@ -465,6 +476,8 @@ class Store:
             "at_risk": bool(at_risk_from),
             "at_risk_from": at_risk_from,
             "overdue_steps": steps,
+            "recurrence": f"R-{row['recurrence']}" if row["recurrence"] is not None else None,
+            "occurrence_at": row["occurrence_at"],
             "version": row["version"],
             "created_at": row["created_at"],
             "created_by": row["created_by"],
@@ -555,7 +568,7 @@ class Store:
         now = fmt(self.now())
         owner = body.get("owner", caller.name)
         with self.tx() as c:
-            self.actor = caller.name
+            self.actor = caller.name or None
             self._check_owner(owner)
             self._check_track(c, body["track"])
             vals = self._validated_fields(body, kind=body["kind"])
@@ -567,12 +580,12 @@ class Store:
                 (owner, body["track"], body["title"], body.get("label"), body["kind"], state, now,
                  vals.get("question"), *vals.get("when", (None, None, None)), vals.get("due_at"),
                  vals.get("wake_at"), vals.get("overdue", "[]"), body.get("note"), vals.get("links", "[]"),
-                 vals.get("answer_at"), now, caller.name, now, caller.name),
+                 vals.get("answer_at"), now, caller.name or owner, now, caller.name or None),
             )
             num = cur.lastrowid
             if "waits_on" in body:
                 self._set_conditions(c, num, body["waits_on"])
-            self._history(c, num, caller.name, "created", None, body.get("note"))
+            self._history(c, num, caller.name or None, "created", None, body.get("note"))
             self._initial_state(c, num, state)
             self._running_lease(c, num, became_running=state == "running", renew=False,
                                 given=self._running_until_arg(body, state == "running"))
@@ -586,7 +599,7 @@ class Store:
             raise ApiError("forbidden", "this client may not write items")
         now = fmt(self.now())
         with self.tx() as c:
-            self.actor = caller.name
+            self.actor = caller.name or None
             row = self._row(c, num)
             if caller.role == "agent" and row["owner"] != caller.name:
                 if not (self._creator_changes(c, caller, row, body) or self._asker_closes(c, caller, row, body)):
@@ -630,12 +643,12 @@ class Store:
             self._running_lease(c, num, became_running=row["state"] != "running",
                                 renew=caller.name == row["owner"], given=given_until)
             c.execute("UPDATE items SET version = version + 1, updated_at = ?, updated_by = ? WHERE num = ?",
-                      (now, caller.name, num))
+                      (now, caller.name or None, num))
             after = self._serialize(c, self._row(c, num))
             changes = {k: [before[k], after[k]] for k in after
                        if k not in DERIVED_FIELDS and before[k] != after[k]}
             note = body.get("note") if new_state in CLOSED else None
-            self._history(c, num, caller.name, "changed", changes or None, note)
+            self._history(c, num, caller.name or None, "changed", changes or None, note)
             owner_update = caller.name == row["owner"] or (new_state in CLOSED and row["state"] not in CLOSED)
             for fn in self.change_listeners:
                 fn(c, num, owner_update, set(changes))

@@ -193,7 +193,7 @@ configurations keep working.
 
 ## 4. The MCP server for agent sessions
 
-`waypoint-mcp` gives a session Waypoint's eight tools. It is a stdio MCP server that the agent's
+`waypoint-mcp` gives a session Waypoint's nine tools. It is a stdio MCP server that the agent's
 client starts per session; it takes everything from its environment:
 
 | Variable | Meaning |
@@ -293,6 +293,28 @@ sudo install -o waypoint -g waypoint -m 0600 /var/lib/waypoint/backup/waypoint-Y
 sudo rm -f /var/lib/waypoint/waypoint.db-wal /var/lib/waypoint/waypoint.db-shm
 sudo systemctl start waypoint
 ```
+
+### Upgrading to 2.0
+
+2.0 adds recurring items: migration 7 (new tables, two new columns on items) runs at the first start,
+like every migration, and changes no existing row. The API stays `/v1` and changes only by
+additions; agent sessions get the ninth MCP tool, `wp_recur`, when their MCP server next starts.
+
+To move a job that runs from systemd or cron under Waypoint's watch, give it a client of its own
+and a recurrence that expects its check-ins:
+
+```sh
+export WAYPOINT_NAME=alice
+wp client add backup-job --role agent --token-file backup-job.token     # the job's client
+wp recur add "Nightly backup" --track ops --owner coordinator --schedule "daily 03:00" \
+    --window 1h --checkin --checkin-by backup-job
+# move backup-job.token to the job user's ~/.config/waypoint/tokens/backup-job.token, mode 0600, then
+# at the end of the job's script, as that user:
+WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1 --note "backup ok"
+```
+
+The schedule in Waypoint is only an expectation: keep it in step with the timer. A run the job
+doesn't report is late within the window and escalates like any item.
 
 ## If Waypoint is down
 

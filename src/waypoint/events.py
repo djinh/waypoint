@@ -52,6 +52,11 @@ class Broadcaster:
                 if r is not None:
                     events.append(("item", {"id": item_id(r["num"]), "version": r["version"], "state": r["state"],
                                             "updated_at": r["updated_at"]}))
+            for num in sorted(self.store.touched_recurrences):
+                r = c.execute("SELECT num, version, state, next_at FROM recurrences WHERE num = ?", (num,)).fetchone()
+                if r is not None:
+                    events.append(("recurrence", {"id": f"R-{r['num']}", "version": r["version"], "state": r["state"],
+                                                  "next_at": r["next_at"]}))
         events += [("track", {"id": t}) for t in sorted(track_ids)]
         for kind, data in events:
             self.publish(kind, data)
