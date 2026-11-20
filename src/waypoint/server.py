@@ -39,16 +39,26 @@ def issue_token(path: str, make_token) -> None:
         raise
 
 
+class BindError(OSError):
+    pass
+
+
 def bind_sockets(addresses: list[str], port: int) -> list[socket.socket]:
+    """One listening socket per address; if any address can't be bound, none stays open."""
     socks = []
     for addr in addresses:
         family = socket.AF_INET6 if ":" in addr else socket.AF_INET
         s = socket.socket(family, socket.SOCK_STREAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((addr, port))
-        s.listen(128)
-        s.setblocking(False)
         socks.append(s)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((addr, port))
+            s.listen(128)
+        except OSError as e:
+            for t in socks:
+                t.close()
+            raise BindError(f"cannot listen on {addr} port {port}: {e.strerror}") from None
+        s.setblocking(False)
     return socks
 
 
@@ -103,8 +113,9 @@ def serve(cfg) -> None:
     check_coordinator(store)
     app = create_app(store, scheduler=Scheduler(store))
     # open event streams would hold a stop forever: give them a few seconds, then close them
+    # limit_concurrency: beyond this many open connections and tasks, uvicorn answers 503 at once
     server = uvicorn.Server(uvicorn.Config(app, log_level="info", proxy_headers=False, server_header=False,
-                                           timeout_graceful_shutdown=5))
+                                           timeout_graceful_shutdown=5, limit_concurrency=500))
     server.run(sockets=bind_sockets(cfg.listen, cfg.port))
 
 
@@ -145,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigError as e:
             print(f"waypointd: configuration: {e}", file=sys.stderr)
             return 2
+        except BindError as e:
+            print(f"waypointd: {e}", file=sys.stderr)
+            return 1
+        except RuntimeError as e:  # e.g. a database with a newer schema than this version
+            print(f"waypointd: {e}", file=sys.stderr)
+            return 1
         return 0
     if args.cmd == "check":
         return dry_check(cfg, args.config_only)

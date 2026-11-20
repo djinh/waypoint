@@ -177,7 +177,10 @@ class Scheduler:
             ob.add(c, row["owner"], "nudge", row, f"{ob.ref(row)} is late: {due}.{tail}", fell_due_at=at, late=late)
         elif action == "escalate":
             text = f"{ob.ref(row)}, owned by {row['owner']}, is late: {due}. Please chase or re-plan.{tail}"
-            ob.add(c, self.store.coordinator(), "escalate", row, text, fell_due_at=at, late=late)
+            coordinator = self.store.coordinator()
+            if coordinator is None:
+                log.warning("escalation for %s not sent: no coordinator", item_id(row["num"]))
+            ob.add(c, coordinator, "escalate", row, text, fell_due_at=at, late=late)
         elif action == "notify":
             # push channels may be public: the title and the owner only
             ob.add(c, step["to"], "notify", row, f"{row['title']} ({row['owner']}) is late", fell_due_at=at, late=late)

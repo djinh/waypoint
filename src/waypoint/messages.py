@@ -15,6 +15,9 @@ from .timeutil import fmt, parse_ts
 
 TEXT_MAX = 1000
 SUMMARY_MAX = 140
+# Every kind of message Waypoint sends (the contract's Delivery.kind); a test keeps the code to these.
+KINDS = ("wake", "unblocked", "replan", "at_risk", "nudge", "escalate", "notify", "undeliverable",
+         "deliverer_silent", "outage", "running_check")
 
 
 def _cut(text: str, n: int) -> str:
@@ -74,6 +77,8 @@ class Outbox:
     def add(self, c, recipient: str | None, kind: str, row, text: str, *, items=(), fell_due_at: str | None = None,
             late: dict | None = None, summary: str | None = None) -> int | None:
         """Write one message; returns its number. No recipient (no coordinator configured): nothing."""
+        if kind not in KINDS:
+            raise ValueError(f"unknown message kind {kind!r}")  # a typo in Waypoint's own code
         if not recipient:
             return None
         if self.store.deliverer_of(recipient) is None:

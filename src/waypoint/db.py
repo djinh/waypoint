@@ -7,6 +7,7 @@ edited; a schema change is a new entry at the end of MIGRATIONS.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -171,6 +172,9 @@ def connect(path: str | Path, migrate_schema: bool = True) -> sqlite3.Connection
     the schema is left alone, and a schema other than this code's is refused, so a tool never
     migrates a database under a running daemon of another version. A brand-new, empty database is
     still set up, so the first clients can be registered before the daemon's first start."""
+    if str(path) != ":memory:" and str(path) and not Path(path).exists():
+        # create it private: it holds every item; SQLite gives its -wal and -shm files the same mode
+        os.close(os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 10000")

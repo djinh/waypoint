@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 from collections import deque
@@ -19,6 +20,7 @@ from .store import Store, item_id
 
 BUFFER = 1000
 QUEUE = 500
+MAX_STREAMS = 100  # open event streams at once; more are refused with 503
 
 
 class Broadcaster:
@@ -79,7 +81,7 @@ class Broadcaster:
         if last_event_id is None:
             return None
         run, _, seq = last_event_id.partition("-")
-        if run != str(self.run) or not seq.isdigit() or int(seq) > self._seq:
+        if run != str(self.run) or not re.fullmatch(r"[0-9]{1,18}", seq) or int(seq) > self._seq:
             return -1
         return int(seq)
 
@@ -100,6 +102,10 @@ class Broadcaster:
                 else:
                     backlog = [ev for ev in self._buffer if ev[0] > last]
         return (loop, queue), backlog
+
+    def streams(self) -> int:
+        with self._lock:
+            return len(self._subscribers)
 
     def unsubscribe(self, entry) -> None:
         with self._lock:

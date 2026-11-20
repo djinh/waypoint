@@ -47,7 +47,7 @@ _PROMPT = re.compile(r"^\s*[❯>]")
 # Older versions said "esc to interrupt" there.
 _BUSY = re.compile(r"^\s*\S\s+\S+…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b|esc to interrupt")
 # C0 and C1 control characters and DEL; a message must never act as keys
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 def input_box(capture: str) -> list[str] | None:
@@ -302,7 +302,7 @@ def _post(url: str, data: bytes, headers: dict, timeout: float):
         req.add_header(k, v)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            resp.read()
+            resp.read(65536)  # the answer's body doesn't matter; never read an endless one
             return DELIVERED
     except urllib.error.HTTPError as e:
         if 400 <= e.code < 500 and e.code not in (408, 429):

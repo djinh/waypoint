@@ -50,8 +50,13 @@ class Signal:
     def fire(self) -> None:
         with self._lock:
             waiters = list(self._waiters)
-        for loop, event in waiters:
-            loop.call_soon_threadsafe(event.set)
+        for entry in waiters:
+            loop, event = entry
+            try:
+                loop.call_soon_threadsafe(event.set)
+            except RuntimeError:  # its loop has closed (shutting down): nobody is waiting there
+                with self._lock:
+                    self._waiters.discard(entry)
 
     def register(self) -> tuple:
         """Start listening before looking, so a signal between the look and the wait isn't lost."""

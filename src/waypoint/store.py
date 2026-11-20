@@ -17,7 +17,8 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from . import content, schema
 from .clock import Clock
@@ -149,15 +150,16 @@ class Store:
                 yield self.conn
                 self.conn.execute("COMMIT")
             except BaseException:
-                self.conn.execute("ROLLBACK")
+                if self.conn.in_transaction:  # a failed COMMIT may have ended it already
+                    self.conn.execute("ROLLBACK")
                 raise
             items, tracks = self._touched_items, self._touched_tracks
             if items or tracks:
                 for fn in self.commit_listeners:
                     try:
                         fn(items, tracks)
-                    except Exception:  # a listener must never undo or fail a committed write
-                        pass
+                    except Exception as exc:  # a listener must never undo or fail a committed write
+                        log.error("commit listener failed: %s", type(exc).__name__)
 
     @contextmanager
     def read(self):
@@ -173,10 +175,20 @@ class Store:
         if role not in ALL_ROLES:
             raise ApiError("invalid", "role: not valid", field="role")
         schema.check("ClientName", name)
+        if label is not None:  # the same rules as over the API, also for `waypointd client add`
+            if not 1 <= len(label) <= 40:
+                raise ApiError("invalid", "label: 1 to 40 characters", field="label")
+            if content.problem(label):
+                raise ApiError("content", "label: looks like it holds data that must not be stored", field="label")
         token = secrets.token_urlsafe(32)
         with self.tx() as c:
             if c.execute("SELECT 1 FROM clients WHERE name = ?", (name,)).fetchone():
                 raise ApiError("invalid", "name: already registered", field="name")
+            if deliverer is not None:
+                row = c.execute("SELECT role FROM clients WHERE name = ? AND retired_at IS NULL",
+                                (deliverer,)).fetchone()
+                if row is None or row["role"] != "deliverer":
+                    raise ApiError("invalid", "deliverer: no such deliverer", field="deliverer")
             c.execute(
                 "INSERT INTO clients (name, role, label, token_hash, deliverer, created_at) VALUES (?,?,?,?,?,?)",
                 (name, role, label, hash_token(token), deliverer, fmt(self.now())),
@@ -379,8 +391,10 @@ class Store:
         if bad:
             raise ApiError("content", f"{bad}: looks like it holds data that must not be stored", field=bad)
         lead = body.get("lead")
-        if lead is not None and self.client(lead) is None:
-            raise ApiError("invalid", "lead: no such client", field="lead")
+        if lead is not None:
+            cl = self.client(lead)  # live clients only
+            if cl is None or cl.role not in WRITERS:
+                raise ApiError("invalid", "lead: no such agent, coordinator or human", field="lead")
         with self.tx() as c:
             row = c.execute("SELECT * FROM tracks WHERE id = ?", (tid,)).fetchone()
             if row is not None and caller.role == "agent" and row["lead"] != caller.name:
@@ -541,7 +555,7 @@ class Store:
             self.actor = caller.name
             self._check_owner(owner)
             self._check_track(c, body["track"])
-            vals = self._validated_fields(c, body, kind=body["kind"])
+            vals = self._validated_fields(body, kind=body["kind"])
             state = body.get("state") or "waiting"  # derived below unless running
             cur = c.execute(
                 "INSERT INTO items (owner, track, title, label, kind, state, state_since, question, when_start, "
@@ -590,7 +604,7 @@ class Store:
             kind = body.get("kind", row["kind"])
             if "kind" in body:
                 sets["kind"] = kind
-            vals = self._validated_fields(c, body, kind=kind, existing=row)
+            vals = self._validated_fields(body, kind=kind, existing=row)
             for f in ("question", "due_at", "wake_at", "overdue", "links", "answer_at"):
                 if f in vals:
                     sets[f] = vals[f]
@@ -718,7 +732,7 @@ class Store:
         if not c.execute("SELECT 1 FROM tracks WHERE id = ?", (track,)).fetchone():
             raise ApiError("invalid", "track: no such track", field="track")
 
-    def _validated_fields(self, c, body: dict, kind: str, existing=None) -> dict:
+    def _validated_fields(self, body: dict, kind: str, existing=None) -> dict:
         """Semantic checks beyond the schema; returns column values for the fields given."""
         out: dict[str, object] = {}
         texts = {"title": body.get("title"), "label": body.get("label"), "note": body.get("note")}
@@ -746,7 +760,7 @@ class Store:
                 {"text": q["text"], "options": q.get("options", []), "recommendation": q.get("recommendation")})
 
         if "when" in body:
-            out["when"] = self._when(body["when"])
+            out["when"] = self._when(body["when"], self.settings.tz)
         for f in ("due_at", "wake_at"):
             if f in body:
                 out[f] = _ts_field(body[f], f)
@@ -793,7 +807,9 @@ class Store:
         return json.dumps({"session": value["session"]})
 
     @staticmethod
-    def _when(w):
+    def _when(w, tz: str = "UTC"):
+        """A when's stored form. Hour precision is cut to the hour in the deployment's zone TZ, which
+        isn't the UTC hour where the zone's offset isn't whole hours (Asia/Kathmandu, +05:45)."""
         if w is None:
             return (None, None, None)
         prec = w["precision"]
@@ -805,13 +821,18 @@ class Store:
             else:
                 start = parse_ts(w["start"])
                 end = parse_ts(w["end"]) if w.get("end") else None
+                zone = ZoneInfo(tz)
                 trunc = {"minute": dict(second=0, microsecond=0), "hour": dict(minute=0, second=0, microsecond=0)}[prec]
-                start = start.replace(**trunc)
-                end = end.replace(**trunc) if end else None
+
+                def cut(t):
+                    return t.astimezone(zone).replace(**trunc).astimezone(timezone.utc)
+
+                start = cut(start)
+                end = cut(end) if end else None
                 s, e = fmt(start), fmt(end)
         except ValueError:
             raise ApiError("invalid", f"when: start and end must be {'days' if prec == 'day' else 'timestamps'} "
-                                      f"for precision {prec}", field="when")
+                                      f"for precision {prec}", field="when") from None
         if end is not None and end < start:
             raise ApiError("invalid", "when.end: before the start", field="when.end")
         return (s, e, prec)

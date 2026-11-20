@@ -20,7 +20,7 @@ from starlette.routing import Route
 
 from . import __version__, monitor, schema, views
 from .deliveries import Deliveries
-from .events import Broadcaster
+from .events import MAX_STREAMS, Broadcaster
 from .errors import ApiError
 from .store import CLOSED, OPEN, Client, Store
 from .timeutil import parse_ts
@@ -250,6 +250,8 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
     async def events(request: Request):
         _need(caller_of(request), READERS)
         _query(request, set())
+        if broadcaster.streams() >= MAX_STREAMS:
+            raise ApiError("unavailable", "too many event streams open; try again later")
         last = request.headers.get("last-event-id")
         last_id = last[:64] if last else None
         return StreamingResponse(broadcaster.stream(last_id, request.is_disconnected), media_type="text/event-stream",
@@ -285,8 +287,13 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         return JSONResponse({"error": {"code": "invalid", "message": "bad request"}}, status_code=400)
 
     async def on_db_error(request: Request, exc):
-        log.warning("database busy or unavailable")
-        return error_response(ApiError("unavailable", "try again shortly"))
+        text = str(exc).lower()
+        if "locked" in text or "busy" in text or "disk i/o" in text:
+            log.warning("database busy or unavailable")
+            return error_response(ApiError("unavailable", "try again shortly"))
+        # anything else (no such table, a syntax error) is a bug, not a moment to wait out
+        log.error("database error on %s %s: %s", request.method, request.url.path, type(exc).__name__)
+        return JSONResponse({"error": {"code": "unavailable", "message": "internal error"}}, status_code=500)
 
     async def on_error(request: Request, exc):
         return JSONResponse({"error": {"code": "unavailable", "message": "internal error"}}, status_code=500)
@@ -339,8 +346,18 @@ class ErrorGuard:
         return getattr(self.app, name)
 
     async def __call__(self, scope, receive, send):
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                names = {k.lower() for k, _ in headers}
+                for k, v in ((b"x-content-type-options", b"nosniff"), (b"cache-control", b"no-store")):
+                    if k not in names:  # the event stream sets its own cache-control
+                        headers.append((k, v))
+                message = {**message, "headers": headers}
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_with_headers if scope["type"] == "http" else send)
         except Exception as exc:  # the 500 has been sent by then
             if scope["type"] != "http":
                 raise
@@ -379,6 +396,7 @@ class TokenGuard:
             caller = await run_in_threadpool(self.store.authenticate, token.strip())
         if caller is None:
             response = error_response(ApiError("unauthorized", "a valid token is needed"))
+            response.headers["WWW-Authenticate"] = "Bearer"
             return await response(scope, receive, send)
         scope.setdefault("state", {})["caller"] = caller
         return await self.app(scope, receive, send)

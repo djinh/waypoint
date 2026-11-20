@@ -27,6 +27,7 @@ import json
 import os
 import sys
 
+from . import __version__
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
 from .present import (InputError, answer_line, client_name, flat, item_id, line, local, to_condition,
                       to_ts, to_when)
@@ -50,7 +51,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default=os.environ.get("WAYPOINT_URL", DEFAULT_URL))
     p.add_argument("--token-file", default=os.environ.get("WAYPOINT_TOKEN_FILE"))
     p.add_argument("--name", default=os.environ.get("WAYPOINT_NAME"))
-    p.add_argument("--json", action="store_true", help="print the API's answer as JSON")
+    p.add_argument("--json", action="store_true", help="print the API's answer as JSON (errors too)")
+    p.add_argument("--version", action="version", version=f"wp {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ls = sub.add_parser("ls", help="list items")
@@ -73,7 +75,8 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--when", help="a day (2026-03-12) or a time; '' clears")
         sp.add_argument("--until")
         sp.add_argument("--link", action="append", default=[])
-        sp.add_argument("--waits-on", action="append", default=None, help="an item id or a time; repeatable")
+        sp.add_argument("--waits-on", action="append", default=None,
+                        help="an item id or a time; repeatable; replaces all conditions ('' clears them)")
         sp.add_argument("--running-until", metavar="TIME",
                         help="running until this time (local if no zone); on add it also sets running")
         if create:
@@ -81,6 +84,8 @@ def parser() -> argparse.ArgumentParser:
             sp.add_argument("--kind", default="task", choices=["task", "decision", "approval", "event"])
         else:
             sp.add_argument("--add-waits-on", action="append", default=[])
+            sp.add_argument("--remove-waits-on", action="append", default=[], metavar="ID_OR_TIME",
+                            help="drop one condition, keeping the others; repeatable")
             where = sp.add_mutually_exclusive_group()
             where.add_argument("--answer-issue", metavar="URL", help="answered as a comment on this issue or PR")
             where.add_argument("--answer-session", metavar="NAME", help="answered in this session (client name)")
@@ -127,7 +132,8 @@ def parser() -> argparse.ArgumentParser:
     put.add_argument("--lead")
     put.add_argument("--note")
     put.add_argument("--order", type=int, default=0)
-    put.add_argument("--archived", action="store_true")
+    put.add_argument("--archived", action=argparse.BooleanOptionalAction, default=None,
+                     help="archive or unarchive it (default: as it is)")
 
     cl = sub.add_parser("client", help="manage clients (coordinators and humans)").add_subparsers(
         dest="action", required=True)
@@ -197,7 +203,7 @@ def item_body(args, create: bool) -> dict:
     if args.link:
         body["links"] = [{"url": u} for u in args.link]
     if args.waits_on is not None:
-        body["waits_on"] = [to_condition(w) for w in args.waits_on]
+        body["waits_on"] = [to_condition(w) for w in args.waits_on if w.strip()]
     if not create and (args.answer_issue or args.answer_session or args.answer_default):
         body["answer_at"] = answer_arg(args)
     if not create and args.add_waits_on:
@@ -207,10 +213,16 @@ def item_body(args, create: bool) -> dict:
     return body
 
 
+def _dumps(value, indent=None) -> str:
+    """JSON with non-ASCII text as it is, except the line and paragraph separators (U+2028/9), which
+    terminals and some readers take as line breaks: they stay escaped."""
+    return json.dumps(value, indent=indent, ensure_ascii=False).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+
+
 def run(args, out) -> int:
     if args.cmd == "health":
         got = WaypointClient(args.url, "", timeout=10).request("GET", "/v1/health")
-        print(json.dumps(got) if args.json else f"{got['status']} {got['version']}", file=out)
+        print(_dumps(got) if args.json else f"{got['status']} {got['version']}", file=out)
         return 0
     client = make_client(args)
 
@@ -219,7 +231,7 @@ def run(args, out) -> int:
         return got if args.json else flat(got)  # text output: other clients' text stays on its line
 
     def show(got, text):
-        print(json.dumps(got, indent=2, ensure_ascii=False) if args.json else text, file=out)
+        print(_dumps(got, indent=2) if args.json else text, file=out)
 
     if args.cmd in ("ls", "mine"):
         if args.cmd == "mine":
@@ -252,6 +264,17 @@ def run(args, out) -> int:
         show(it, line(it))
     elif args.cmd == "update":
         body = item_body(args, create=False)
+        if args.remove_waits_on:
+            if "waits_on" in body:
+                raise Usage("give --waits-on or --remove-waits-on, not both")
+            gone = [to_condition(w) for w in args.remove_waits_on]
+            cur = api("GET", f"/v1/items/{item_id(args.id)}")
+            kept = [{"item": c["item"]} if "item" in c else {"time": c["time"]} for c in cur["waits_on"]]
+            missing = [g for g in gone if g not in kept]
+            if missing:
+                raise Usage(f"{item_id(args.id)} doesn't wait on {next(iter(missing[0].values()))}")
+            body["waits_on"] = [c for c in kept if c not in gone]
+            body["if_version"] = cur["version"]  # nobody changed the conditions in between
         if not body:
             raise Usage("nothing to change")
         it = api("PATCH", f"/v1/items/{item_id(args.id)}", body)
@@ -289,8 +312,12 @@ def run(args, out) -> int:
         show(got, "\n".join(f"{t['id']}: {t['title']} (lead {t['lead'] or '-'})" + (" [archived]" if t["archived"] else "")
                             for t in got["tracks"]) or "No tracks.")
     elif args.cmd == "track":
+        archived = args.archived
+        if archived is None:  # a PUT replaces the track: keep its archived state unless told
+            known = {t["id"]: t for t in api("GET", "/v1/tracks", query={"archived": "true"})["tracks"]}
+            archived = bool(known.get(args.id, {}).get("archived", False))
         body = {"title": args.title, "lead": args.lead, "note": args.note, "order": args.order,
-                "archived": args.archived}
+                "archived": archived}
         t = api("PUT", f"/v1/tracks/{client_name(args.id)}", body)
         show(t, f"{t['id']}: {t['title']}")
     elif args.cmd == "client":
@@ -351,22 +378,24 @@ def main(argv: list[str] | None = None, out=None, err=None) -> int:
     out = out or sys.stdout
     err = err or sys.stderr
     args = parser().parse_args(argv)
+
+    def fail(code: int, error: dict, text: str) -> int:
+        # with --json, errors are JSON too (on stderr, like the text form), in the API's own shape
+        print(_dumps({"error": error}) if args.json else f"wp: {text}", file=err)
+        return code
+
     try:
         return run(args, out)
-    except Usage as e:
-        print(f"wp: {e}", file=err)
-        return 2
-    except InputError as e:
-        print(f"wp: {e}", file=err)
-        return 2
+    except (Usage, InputError) as e:
+        return fail(2, {"code": "usage", "message": str(e)}, str(e))
     except Unavailable:
-        print("wp: Waypoint unavailable", file=err)
-        return 3
+        return fail(3, {"code": "unavailable", "message": "Waypoint unavailable"}, "Waypoint unavailable")
     except ApiFailure as e:
         where = f" ({e.field})" if e.field else ""
         cycle = f": {' → '.join(e.cycle)}" if e.cycle else ""
-        print(f"wp: {e.code}{where}: {e.message}{cycle}", file=err)
-        return 1
+        error = {"code": e.code, "message": e.message, **({"field": e.field} if e.field else {}),
+                 **({"cycle": e.cycle} if e.cycle else {})}
+        return fail(1, error, f"{e.code}{where}: {e.message}{cycle}")
 
 
 if __name__ == "__main__":

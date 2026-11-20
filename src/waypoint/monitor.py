@@ -139,10 +139,17 @@ def backup(store: Store, directory: str | Path) -> tuple[Path, Path]:
 
 
 def export_json(store: Store) -> dict:
+    """Everything but token hashes, from one read transaction: a snapshot, even while the daemon
+    writes (the backup command runs beside it)."""
     with store.read() as c:
-        clients = [{"name": r["name"], "role": r["role"], "label": r["label"], "deliverer": r["deliverer"],
-                    "created_at": r["created_at"], "retired_at": r["retired_at"]}
-                   for r in c.execute("SELECT * FROM clients ORDER BY name")]
-    items = [store.get_item(it["id"], history=True) for it in store.items()]
+        c.execute("BEGIN")
+        try:
+            clients = [{"name": r["name"], "role": r["role"], "label": r["label"], "deliverer": r["deliverer"],
+                        "created_at": r["created_at"], "retired_at": r["retired_at"]}
+                       for r in c.execute("SELECT * FROM clients ORDER BY name")]
+            items = [store.get_item(it["id"], history=True) for it in store.items()]
+            tracks = store.tracks(archived=True)
+        finally:
+            c.execute("COMMIT")
     return {"exported_at": fmt(store.now()), "version": __version__, "clients": clients,
-            "tracks": store.tracks(archived=True), "items": items}
+            "tracks": tracks, "items": items}

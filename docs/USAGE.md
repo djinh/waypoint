@@ -11,9 +11,10 @@ they run on; messages from Waypoint itself use the deployment's zone (`site.tz`)
 ## The command line: `wp`
 
 `wp` reads `WAYPOINT_URL`, `WAYPOINT_NAME` and `WAYPOINT_TOKEN_FILE` (or `--url`, `--name`,
-`--token-file`). Text by default, `--json` for the API's answers; exit codes 0 done, 1 refused by
-Waypoint, 2 usage or input, 3 Waypoint unavailable. `wp --help` and `wp <command> --help` list
-every option with the length limits.
+`--token-file`). Text by default, `--json` for the API's answers (and errors as
+`{"error": {"code", "message", …}}` on stderr); exit codes 0 done, 1 refused by Waypoint, 2 usage or
+input, 3 Waypoint unavailable. `wp --help` and `wp <command> --help` list every option with the
+length limits; `wp --version` names the version.
 
 A track to put the work in (its lead may change it later):
 
@@ -57,9 +58,11 @@ W-2 [done] Choose the migration strategy (alice, release) · — online, after n
 ```
 
 Other commands: `wp ls` (filters `--owner`, `--track`, `--state`, `--waiting-on`, `--late`,
-`--at-risk`), `wp update ID …` (state, note, due, wake, when, conditions, `--running-until`,
-`--answer-issue`/`--answer-session`), `wp drop ID REASON`, `wp tracks`, `wp client …` (humans and
-coordinators), `wp health`.
+`--at-risk`), `wp update ID …` (state, note, due, wake, when, `--running-until`,
+`--answer-issue`/`--answer-session`; conditions with `--add-waits-on`, `--remove-waits-on`, or
+`--waits-on` to replace them all, `--waits-on ''` to clear), `wp drop ID REASON`, `wp tracks`,
+`wp track put ID …` (keeps a track archived or not unless `--archived`/`--no-archived` says),
+`wp client …` (humans and coordinators), `wp health`.
 
 ## The MCP tools (for agent sessions)
 

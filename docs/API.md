@@ -12,8 +12,10 @@ do, they do through it.
 
 - **JSON** in and out, UTF-8, under `/v1`.
 - **A token on every request** but `GET /v1/health`: `Authorization: Bearer <token>`. Never in a
-  URL. A request without a valid token gets `401 unauthorized` and nothing else, not even whether an
-  item exists.
+  URL. A request without a valid token gets `401 unauthorized` (with `WWW-Authenticate: Bearer`)
+  and nothing else, not even whether an item exists.
+- **Not cached**: every answer carries `Cache-Control: no-store` (the event stream: `no-cache`) and
+  `X-Content-Type-Options: nosniff`.
 - **Times** are RFC 3339 with seconds and a zone. Waypoint stores and answers in UTC (`Z`). Input
   without a zone is refused. The deployment's time zone (`tz` in the views) is for display, and for
   days (below).
@@ -184,7 +186,8 @@ their own items, on anyone's items. The caller's identity always comes from its 
 
 `GET /v1/tracks` lists tracks by `order`, then `id`; `?archived=true` includes archived ones.
 `PUT /v1/tracks/{id}` creates or replaces one track (`title`, `lead`, `note`, `order`,
-`archived`). Tracks are what pages draw as lanes; `lead` is the client that keeps the track's plan.
+`archived`). Tracks are what pages draw as lanes; `lead` is the client that keeps the track's plan
+(an agent, coordinator or human; anything else is `400 invalid`).
 
 Who may write a track: any agent, human or coordinator may create a new one; an existing track is
 replaced only by its lead, a coordinator or a human. Readers and deliverers get `403 forbidden`.
@@ -223,7 +226,8 @@ Which items are in it:
 id. `window` echoes `from` and `to`; `done_days` says how long closed items stay.
 
 Placing items in time is the page's job, from these fields:
-- `when.start`/`when.end` with `precision`: `minute` and `hour` are timestamps; **`day` is a plain
+- `when.start`/`when.end` with `precision`: `minute` and `hour` are timestamps (cut to the minute,
+  or to the hour in the deployment's zone `tz`); **`day` is a plain
   date** (`"2026-03-12"`) in `tz`, meaning "some time that day", and is never drawn at 00:00;
 - `due_at` for deadlines; `wake_at` is the owner's own reminder and usually not drawn;
 - an item with neither `when` nor `due_at` is **undated**: it is drawn in dependency order only,
@@ -268,7 +272,7 @@ restarts. A client that reconnects with `Last-Event-ID: 1731571200000-42` gets t
 or `event: reset` when they are no longer kept (the last 1000), when the id is from an earlier run
 or unreadable, or when it read too slowly; after a reset, reload everything. Any reading role; the token goes in the
 Authorization header (browsers' `EventSource` can't send one, so a page reads the stream through
-its own backend).
+its own backend). At most 100 streams are open at once; one more gets `503 unavailable`.
 
 ## Deliveries
 

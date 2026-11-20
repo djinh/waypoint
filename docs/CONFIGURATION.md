@@ -37,7 +37,8 @@ registered clients (the database is opened read-only and never migrated; `--conf
 
 **Fixed timings** (not configurable; listed so operators know them): scheduler pass every 15 s;
 a gap of more than 60 s between passes is an outage; delivery lease 120 s; a deliverer silent for
-5 minutes is reported; confirmed or withdrawn messages are pruned after 30 days.
+5 minutes is reported; confirmed or withdrawn messages are pruned after 30 days. Limits: at most 500
+open connections (more get `503` at once) and 100 open event streams.
 
 ## 2. A deliverer: `deliver.toml`
 

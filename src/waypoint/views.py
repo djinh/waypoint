@@ -16,12 +16,25 @@ def _order(items: dict[str, dict], ids: set[str], track_order: dict[str, tuple])
     """Track order, then dependency order (depth in the graph), then id."""
     memo: dict[str, int] = {}
 
-    def depth(iid: str) -> int:
-        if iid not in memo:
-            memo[iid] = 0  # guards against loops, which Waypoint refuses anyway
+    def depth(start: str) -> int:
+        # A depth-first walk with an explicit stack, so a chain of any length can't hit Python's
+        # recursion limit. Each node is entered, then finished once everything it waits on is.
+        # `path` holds the nodes entered but not finished: exactly the current node's ancestors, so
+        # meeting one of them again is a loop (which Waypoint refuses anyway; it counts as 0).
+        if start in memo:
+            return memo[start]
+        stack, path = [(start, False)], set()
+        while stack:
+            iid, finish = stack.pop()
             ups = [d for d in _deps(items[iid]) if d in items]
-            memo[iid] = 1 + max((depth(u) for u in ups), default=-1)
-        return memo[iid]
+            if finish:
+                memo[iid] = 1 + max((memo.get(u, 0) for u in ups), default=-1)
+                path.discard(iid)
+            elif iid not in memo and iid not in path:
+                path.add(iid)
+                stack.append((iid, True))
+                stack.extend((u, False) for u in ups if u not in memo and u not in path)
+        return memo[start]
 
     far = (1 << 30, "")
     return sorted(ids, key=lambda i: (track_order.get(items[i]["track"], far), depth(i), item_num(i)))
