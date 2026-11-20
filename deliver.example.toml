@@ -1,0 +1,37 @@
+# waypoint-deliver configuration: one per host and user where recipients live.
+# Keep your real file outside the repository; it names your panes and push topics.
+
+[waypoint]
+url = "http://127.0.0.1:7130"
+# This deliverer's token (from `waypointd client add host-1 deliverer --token-file ...`).
+# Keep the file readable by this user only.
+token_file = "/etc/waypoint/host-1.token"
+# Put in front of every message typed into a pane.
+prefix = "[waypoint] "
+# What a tmux recipient gets typed: "ref" (recommended for agent sessions) or "full" (the default).
+# A typed line arrives as the session's own user input, with nothing marking it as coming from
+# someone else. "full" types the message's text, which contains item titles and notes written by
+# other clients: a way to put words into an agent's mouth. "ref" types only Waypoint's own words and
+# the item id, e.g. "[waypoint] wake-up for W-12 (reminder): read it with wp_get W-12"; the session
+# then reads the item with its tools, where it is clearly data.
+message = "ref"
+
+# One table per recipient registered with this deliverer (`waypointd client route NAME host-1`).
+
+# An agent session in tmux: the message is typed into its pane, only when the input box is empty.
+[recipient.agent-a]
+adapter = "tmux"
+target = "main"          # tmux target (session, window or pane)
+socket = "agent-a"       # tmux -L socket name, or a socket file path (-S); leave out for the default server
+
+# A human: a push notification with the item's title and owner only (e.g. an ntfy topic).
+[recipient.alice]
+adapter = "push"
+url = "https://push.example.org/your-topic"
+title = "Waypoint"
+priority = "default"
+
+# Anything else: the delivery as JSON, POSTed to a URL.
+[recipient.ops-bot]
+adapter = "webhook"
+url = "https://hooks.example.org/waypoint"

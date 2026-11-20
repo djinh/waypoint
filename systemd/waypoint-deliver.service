@@ -1,0 +1,21 @@
+# The deliverer, as a systemd *user* unit, one for each user whose sessions get wake-ups.
+# Install: ~/.config/systemd/user/waypoint-deliver.service, then
+#   systemctl --user enable --now waypoint-deliver
+# and `loginctl enable-linger <user>` so it runs without a login. See docs/INSTALL.md.
+# It must see the user's tmux sockets, so it runs as that user without PrivateTmp.
+
+[Unit]
+Description=Waypoint deliverer for this user's sessions
+Documentation=https://github.com/djinh/waypoint/blob/main/docs/INSTALL.md
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/waypoint-deliver --config %h/.config/waypoint/deliver.toml
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

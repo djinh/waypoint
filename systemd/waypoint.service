@@ -1,0 +1,51 @@
+# waypointd as a system service. An example: adjust paths to your installation.
+# Install: /etc/systemd/system/waypoint.service; see docs/INSTALL.md.
+
+[Unit]
+Description=Waypoint: open items, dependencies and wake-ups for agent sessions
+Documentation=https://github.com/djinh/waypoint/blob/main/docs/INSTALL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=waypoint
+Group=waypoint
+ExecStart=/opt/waypoint/bin/waypointd --config /etc/waypoint/waypoint.toml serve
+# If a listen address isn't up yet at boot (a private network that comes up later), the bind
+# fails and systemd tries again.
+Restart=always
+RestartSec=5
+
+# The database lives in /var/lib/waypoint (store.database in the config).
+StateDirectory=waypoint
+StateDirectoryMode=0700
+ConfigurationDirectory=waypoint
+UMask=0077
+
+# Hardening: it writes only its state directory, sees no home folders, runs nothing.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

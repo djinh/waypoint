@@ -1,0 +1,166 @@
+"""waypointd: the daemon, and local admin commands that work on its database directly.
+
+    waypointd [--config FILE] serve
+    waypointd [--config FILE] client add NAME ROLE --token-file FILE [--label TEXT]
+    waypointd [--config FILE] client rotate NAME --token-file FILE
+    waypointd [--config FILE] client route NAME DELIVERER|-
+    waypointd [--config FILE] backup DIR
+
+Tokens are written only to the named file, created with mode 0600; they are never printed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import socket
+import sys
+
+from . import __version__
+from .config import ConfigError, load
+from .db import SchemaMismatch, connect
+from .errors import ApiError
+from .store import ALL_ROLES, Store
+
+
+def issue_token(path: str, make_token) -> None:
+    """Create the token file (mode 0600 from the start, never over an existing file) *before*
+    ``make_token()`` changes the database, so a file that can't be written never costs a client
+    its working token. On any failure the new file is removed."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(make_token() + "\n")
+    except BaseException:
+        os.unlink(path)
+        raise
+
+
+def bind_sockets(addresses: list[str], port: int) -> list[socket.socket]:
+    socks = []
+    for addr in addresses:
+        family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((addr, port))
+        s.listen(128)
+        s.setblocking(False)
+        socks.append(s)
+    return socks
+
+
+def check_coordinator(store: Store) -> None:
+    """A configured coordinator must be a registered coordinator, or escalations go nowhere."""
+    name = store.settings.coordinator
+    if name is None:
+        return
+    cl = store.client(name)
+    if cl is None or cl.role != "coordinator":
+        raise ConfigError(f"site.coordinator: {name!r} is not a registered coordinator")
+
+
+def serve(cfg) -> None:
+    import uvicorn
+
+    from .api import create_app
+    from .scheduler import Scheduler
+
+    store = Store(connect(cfg.database), settings=cfg.settings)
+    check_coordinator(store)
+    app = create_app(store, scheduler=Scheduler(store))
+    # open event streams would hold a stop forever: give them a few seconds, then close them
+    server = uvicorn.Server(uvicorn.Config(app, log_level="info", proxy_headers=False, server_header=False,
+                                           timeout_graceful_shutdown=5))
+    server.run(sockets=bind_sockets(cfg.listen, cfg.port))
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="waypointd", description="Waypoint daemon")
+    p.add_argument("--config", help="TOML configuration file")
+    p.add_argument("--version", action="version", version=f"waypointd {__version__}")
+    sub = p.add_subparsers(dest="cmd")
+    sub.add_parser("serve", help="run the daemon (the default)")
+    bk = sub.add_parser("backup", help="write a consistent copy of the database and a JSON export to DIR")
+    bk.add_argument("dir")
+    cl = sub.add_parser("client", help="register clients locally").add_subparsers(dest="action", required=True)
+    add = cl.add_parser("add")
+    add.add_argument("name")
+    add.add_argument("role", choices=ALL_ROLES)
+    add.add_argument("--label")
+    add.add_argument("--token-file", required=True)
+    add.add_argument("--deliverer", help="the deliverer that reaches this client")
+    rot = cl.add_parser("rotate")
+    rot.add_argument("name")
+    rot.add_argument("--token-file", required=True)
+    route = cl.add_parser("route", help="register a client with the deliverer that reaches it ('-': none)")
+    route.add_argument("name")
+    route.add_argument("deliverer")
+    args = p.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    try:
+        cfg = load(args.config)
+    except (ConfigError, OSError, ValueError) as e:
+        print(f"waypointd: configuration: {e}", file=sys.stderr)
+        return 2
+    if args.cmd in (None, "serve"):
+        try:
+            serve(cfg)
+        except ConfigError as e:
+            print(f"waypointd: configuration: {e}", file=sys.stderr)
+            return 2
+        return 0
+    try:
+        store = Store(connect(cfg.database, migrate_schema=False), settings=cfg.settings)
+    except SchemaMismatch as e:
+        print(f"waypointd: {e}", file=sys.stderr)
+        return 1
+    if args.cmd == "backup":
+        from .monitor import backup
+        try:
+            db_path, json_path = backup(store, args.dir)
+        except OSError as e:
+            print(f"waypointd: backup: {e.strerror}", file=sys.stderr)
+            return 1
+        print(f"waypointd: wrote {db_path.name} and {json_path.name}")
+        return 0
+    if args.action == "route":
+        try:
+            store.route(args.name, None if args.deliverer == "-" else args.deliverer)
+        except ApiError as e:
+            print(f"waypointd: {e.message}", file=sys.stderr)
+            return 1
+        print(f"waypointd: {args.name} is reached through {args.deliverer}")
+        return 0
+    if args.action == "add":
+        if args.deliverer:
+            cl = store.client(args.deliverer)
+            if cl is None or cl.role != "deliverer":
+                print("waypointd: --deliverer: no such deliverer", file=sys.stderr)
+                return 1
+
+        def make():
+            token = store.add_client(args.name, args.role, label=args.label)
+            if args.deliverer:
+                store.route(args.name, args.deliverer)
+            return token
+    else:
+        make = lambda: store.rotate_token(args.name)  # noqa: E731
+    try:
+        issue_token(args.token_file, make)
+    except FileExistsError:
+        print("waypointd: the token file exists already; remove it or name another", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"waypointd: cannot write the token file: {e.strerror}", file=sys.stderr)
+        return 1
+    except ApiError as e:
+        print(f"waypointd: {e.message}", file=sys.stderr)
+        return 1
+    print(f"waypointd: token for {args.name} written to {args.token_file}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

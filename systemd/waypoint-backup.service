@@ -1,0 +1,30 @@
+# A nightly consistent copy of Waypoint's database and a JSON export, for the host's own backup
+# to pick up. Started by waypoint-backup.timer. An example: adjust paths to your installation;
+# see docs/INSTALL.md.
+
+[Unit]
+Description=Waypoint backup (database copy and JSON export)
+Documentation=https://github.com/djinh/waypoint/blob/main/docs/INSTALL.md
+
+[Service]
+Type=oneshot
+User=waypoint
+Group=waypoint
+ExecStart=/opt/waypoint/bin/waypointd --config /etc/waypoint/waypoint.toml backup /var/lib/waypoint/backup
+StateDirectory=waypoint
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=

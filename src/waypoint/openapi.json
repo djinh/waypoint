@@ -1,0 +1,3055 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "Waypoint API",
+  "version": "0.1.0",
+  "summary": "Open items, dependencies and wake-ups for a group of agent sessions.",
+  "description": "The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client\nof it. The prose that goes with this file is `docs/API.md`; where the two differ, this file is\nthe contract and the prose is a bug.\n\nConventions:\n- JSON in and out, UTF-8. Times are RFC 3339. Waypoint answers in UTC with a `Z` suffix; input\n  must carry a zone (`Z` or an offset) and is converted to UTC. A day (`when` with precision\n  `day`) is a plain date, `YYYY-MM-DD`, in the deployment's time zone.\n- Every request but `GET /v1/health` carries `Authorization: Bearer <token>`.\n- Unknown fields in a request body are refused (`invalid`), never stored.\n- Absent fields in a response are never used for \"unknown\": a field without a value is `null`\n  or an empty list.\n",
+  "license": {
+   "name": "MIT",
+   "identifier": "MIT"
+  }
+ },
+ "servers": [
+  {
+   "url": "http://127.0.0.1:{port}",
+   "variables": {
+    "port": {
+     "default": "7130",
+     "description": "Waypoint's built-in default port; deployments usually set their own."
+    }
+   }
+  }
+ ],
+ "security": [
+  {
+   "bearer": []
+  }
+ ],
+ "tags": [
+  {
+   "name": "items"
+  },
+  {
+   "name": "tracks"
+  },
+  {
+   "name": "views",
+   "description": "Read models for pages. Every flag and edge a page needs is in them."
+  },
+  {
+   "name": "deliveries",
+   "description": "Deliverers fetch the messages that fell due for their recipients and confirm them."
+  },
+  {
+   "name": "clients",
+   "description": "Register clients and manage their tokens. Coordinators and humans only."
+  },
+  {
+   "name": "monitoring"
+  },
+  {
+   "name": "health"
+  }
+ ],
+ "paths": {
+  "/v1/health": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Liveness; no token, no data.",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Waypoint is up.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Health"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/items": {
+   "get": {
+    "tags": [
+     "items"
+    ],
+    "summary": "List items, filtered.",
+    "parameters": [
+     {
+      "name": "owner",
+      "in": "query",
+      "schema": {
+       "$ref": "#/components/schemas/ClientName"
+      }
+     },
+     {
+      "name": "track",
+      "in": "query",
+      "schema": {
+       "$ref": "#/components/schemas/TrackId"
+      }
+     },
+     {
+      "name": "state",
+      "in": "query",
+      "description": "Comma-separated states, or `all`. Default `next,running,waiting` (the open ones).",
+      "schema": {
+       "type": "string",
+       "examples": [
+        "next,running",
+        "all"
+       ]
+      }
+     },
+     {
+      "name": "waiting_on",
+      "in": "query",
+      "description": "Only items with an open condition on an item owned by this client.",
+      "schema": {
+       "$ref": "#/components/schemas/ClientName"
+      }
+     },
+     {
+      "name": "waits_on_human",
+      "in": "query",
+      "description": "Only items with an open condition on an item owned by a human.",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "name": "late",
+      "in": "query",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "name": "at_risk",
+      "in": "query",
+      "schema": {
+       "type": "boolean"
+      }
+     },
+     {
+      "name": "changed_since",
+      "in": "query",
+      "description": "Only items updated after this time (any state, so pages see items that closed).",
+      "schema": {
+       "$ref": "#/components/schemas/Timestamp"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 2000,
+       "default": 500
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Matching items, oldest `created_at` first.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "items",
+          "truncated"
+         ],
+         "properties": {
+          "items": {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/Item"
+           }
+          },
+          "truncated": {
+           "type": "boolean",
+           "description": "More items matched than `limit`."
+          }
+         }
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "items"
+    ],
+    "summary": "Create an item.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ItemCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "The new item, with its derived state and flags.",
+      "headers": {
+       "Location": {
+        "schema": {
+         "type": "string"
+        },
+        "description": "`/v1/items/{id}`"
+       }
+      },
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Item"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "$ref": "#/components/responses/Conflict"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/items/{id}": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/ItemId"
+     }
+    }
+   ],
+   "get": {
+    "tags": [
+     "items"
+    ],
+    "summary": "One item, with its history and what waits on it.",
+    "responses": {
+     "200": {
+      "description": "The item.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ItemDetail"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   },
+   "patch": {
+    "tags": [
+     "items"
+    ],
+    "summary": "Change an item.",
+    "description": "Only the fields present change; `null` clears a field that may be empty. Who may change\nwhat is in `docs/API.md` (Permissions).\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ItemPatch"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The item after the change.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Item"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "$ref": "#/components/responses/Conflict"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/items/{id}/ask": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/ItemId"
+     }
+    }
+   ],
+   "post": {
+    "tags": [
+     "items"
+    ],
+    "summary": "Put a decision to a human for this item, in one step.",
+    "description": "Creates a `decision` item owned by the human, with the question, and makes this item wait\non it, in one transaction: either both happen or neither. The caller needs the right to\nchange this item. Asked again with the same human, title and question while that decision\nis open and this item waits on it, Waypoint answers the existing decision (200) instead of\ncreating a second one, so a retry is safe.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "The decision was created and this item now waits on it.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AskResult"
+        }
+       }
+      }
+     },
+     "200": {
+      "description": "The same question was open already; nothing changed.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AskResult"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "409": {
+      "$ref": "#/components/responses/Conflict"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/tracks": {
+   "get": {
+    "tags": [
+     "tracks"
+    ],
+    "summary": "All tracks, in display order.",
+    "parameters": [
+     {
+      "name": "archived",
+      "in": "query",
+      "description": "Include archived tracks.",
+      "schema": {
+       "type": "boolean",
+       "default": false
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The tracks, by `order`, then `id`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "tracks"
+         ],
+         "properties": {
+          "tracks": {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/Track"
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/v1/tracks/{id}": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/TrackId"
+     }
+    }
+   ],
+   "put": {
+    "tags": [
+     "tracks"
+    ],
+    "summary": "Create or replace one track.",
+    "description": "Any agent, human or coordinator may create a new track; an existing one is replaced only\nby its lead, a coordinator or a human.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TrackPut"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The track as stored.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Track"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/views/timeline": {
+   "get": {
+    "tags": [
+     "views"
+    ],
+    "summary": "Read model for the time page.",
+    "description": "Items, dependency edges and derived flags around a window of time. The page does the\nbucketing itself. Which items are included is in `docs/API.md` (Views).\n",
+    "parameters": [
+     {
+      "name": "from",
+      "in": "query",
+      "description": "Start of the window. Default now minus `done_days`.",
+      "schema": {
+       "$ref": "#/components/schemas/Timestamp"
+      }
+     },
+     {
+      "name": "to",
+      "in": "query",
+      "description": "End of the window. Default now plus 9 days.",
+      "schema": {
+       "$ref": "#/components/schemas/Timestamp"
+      }
+     },
+     {
+      "name": "track",
+      "in": "query",
+      "description": "Comma-separated track ids; default all tracks that are not archived.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The timeline.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TimelineView"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/v1/views/for/{human}": {
+   "parameters": [
+    {
+     "name": "human",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/ClientName"
+     }
+    }
+   ],
+   "get": {
+    "tags": [
+     "views"
+    ],
+    "summary": "Read model for the \"you first\" page.",
+    "description": "That human's open items, the ones that are their turn first and longest-waiting first, each\nwith the chain it unblocks and, if it is not their turn yet, what it is waiting for.\n",
+    "responses": {
+     "200": {
+      "description": "The view.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForView"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/v1/deliveries": {
+   "get": {
+    "tags": [
+     "deliveries"
+    ],
+    "summary": "Fetch my delivery queue (deliverers only), with a long-poll.",
+    "description": "Returns the messages that fell due for the recipients registered with the calling\ndeliverer, are not confirmed, and are not under an unexpired lease (never handed out, or\nhanded out more than `lease_seconds` ago). Withdrawn messages (see `docs/API.md`) are never\nreturned. If there are none, Waypoint holds the request open for\nup to `wait` seconds and answers as soon as one falls due, or with an empty list at the end.\nA message handed out and not confirmed within `lease_seconds` is handed out again, with\n`attempt` increased.\n",
+    "parameters": [
+     {
+      "name": "wait",
+      "in": "query",
+      "description": "Seconds to hold the request open when the queue is empty.",
+      "schema": {
+       "type": "integer",
+       "minimum": 0,
+       "maximum": 60,
+       "default": 60
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 100,
+       "default": 50
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The messages, oldest `fell_due_at` first; possibly none.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeliveryBatch"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/v1/deliveries/{id}/ack": {
+   "parameters": [
+    {
+     "name": "id",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/DeliveryId"
+     }
+    }
+   ],
+   "post": {
+    "tags": [
+     "deliveries"
+    ],
+    "summary": "Confirm one message (deliverers only).",
+    "description": "Idempotent: confirming the same message again returns the first confirmation unchanged.\nA message of another deliverer is answered `not_found`.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AckRequest"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The confirmation as recorded.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Ack"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/v1/clients": {
+   "get": {
+    "tags": [
+     "clients"
+    ],
+    "summary": "All clients, retired ones included.",
+    "responses": {
+     "200": {
+      "description": "The clients, by name.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "clients"
+         ],
+         "properties": {
+          "clients": {
+           "type": "array",
+           "items": {
+            "$ref": "#/components/schemas/Client"
+           }
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "clients"
+    ],
+    "summary": "Register a client. Its token is in the answer, once.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClientCreate"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "The client and its token. Waypoint keeps only the token's hash.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ClientWithToken"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/clients/{name}": {
+   "parameters": [
+    {
+     "name": "name",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/ClientName"
+     }
+    }
+   ],
+   "patch": {
+    "tags": [
+     "clients"
+    ],
+    "summary": "Change a client's label or deliverer, or retire it.",
+    "description": "Retiring is refused (`invalid`, field `retired`) while the client owns open items: hand\nthem to another owner or close them first. A retired client's token stops working.\n",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClientPatch"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The client as it is now.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Client"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     },
+     "422": {
+      "$ref": "#/components/responses/Content"
+     }
+    }
+   }
+  },
+  "/v1/clients/{name}/rotate": {
+   "parameters": [
+    {
+     "name": "name",
+     "in": "path",
+     "required": true,
+     "schema": {
+      "$ref": "#/components/schemas/ClientName"
+     }
+    }
+   ],
+   "post": {
+    "tags": [
+     "clients"
+    ],
+    "summary": "Replace a client's token. The old one stops working at once.",
+    "responses": {
+     "200": {
+      "description": "The new token, once.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ClientWithToken"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "404": {
+      "$ref": "#/components/responses/NotFound"
+     }
+    }
+   }
+  },
+  "/v1/events": {
+   "get": {
+    "tags": [
+     "views"
+    ],
+    "summary": "A server-sent stream of changes, so pages update live.",
+    "description": "`text/event-stream`. After every committed change Waypoint sends one event per changed\nitem (`event: item`, data `{id, version, state, updated_at}`) and per changed track\n(`event: track`, data `{id}`), each with an `id:` of the form `<run>-<seq>` (`run` changes\nwhen Waypoint restarts; `seq` increases). A page reloads what it shows\nwhen it sees one. Lines starting with `:` are heartbeats. Reconnecting with the\n`Last-Event-ID` header sends what was missed, or `event: reset` (data `{reason}`) when that\nis too far back, the id is from before a restart, or the reader was too slow: then reload\neverything. The token goes in the\nAuthorization header like everywhere else, never in the URL; a browser page reads the\nstream through its own backend.\n",
+    "parameters": [
+     {
+      "name": "Last-Event-ID",
+      "in": "header",
+      "required": false,
+      "description": "The `id` of the last event received, `<run>-<seq>`.",
+      "schema": {
+       "type": "string",
+       "maxLength": 64
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The stream; it stays open.",
+      "content": {
+       "text/event-stream": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/v1/status": {
+   "get": {
+    "tags": [
+     "monitoring"
+    ],
+    "summary": "What needs attention, for monitoring and the coordinator's checks.",
+    "responses": {
+     "200": {
+      "description": "The status. `ok` is false when any list is not empty or the scheduler is behind.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Status"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
+  "/metrics": {
+   "get": {
+    "tags": [
+     "monitoring"
+    ],
+    "summary": "Counts for a metrics collector, in the Prometheus text format. Needs a token like everything else.",
+    "responses": {
+     "200": {
+      "description": "Prometheus text exposition format.",
+      "content": {
+       "text/plain": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "securitySchemes": {
+   "bearer": {
+    "type": "http",
+    "scheme": "bearer",
+    "description": "One token per client, issued by `wp client add`. Never put it in a URL."
+   }
+  },
+  "responses": {
+   "Invalid": {
+    "description": "`invalid`: the request is malformed (bad field, value, query parameter or unknown field).",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   },
+   "Unauthorized": {
+    "description": "`unauthorized`: no token or not a valid one. Nothing else is revealed.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   },
+   "Forbidden": {
+    "description": "`forbidden`: the caller's role may not do this.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   },
+   "NotFound": {
+    "description": "`not_found`: no such item, track, human or delivery (or not the caller's delivery).",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   },
+   "Conflict": {
+    "description": "`loop`: the write would close a loop of conditions (`cycle` names it); `version_conflict`: `if_version` did not match.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   },
+   "Content": {
+    "description": "`content`: a field looks like it holds a secret, an address or other data that must not be stored. `field` names it; the offending text is never echoed.",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/components/schemas/Error"
+      }
+     }
+    }
+   }
+  },
+  "schemas": {
+   "Timestamp": {
+    "type": "string",
+    "format": "date-time",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+    "description": "RFC 3339 with seconds and a zone. Responses are always UTC with `Z`.",
+    "examples": [
+     "2026-03-10T09:30:00Z"
+    ]
+   },
+   "Day": {
+    "type": "string",
+    "format": "date",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "description": "A calendar day in the deployment's time zone."
+   },
+   "ItemId": {
+    "type": "string",
+    "pattern": "^W-[1-9][0-9]*$",
+    "description": "Set by Waypoint, never reused.",
+    "examples": [
+     "W-142"
+    ]
+   },
+   "DeliveryId": {
+    "type": "string",
+    "pattern": "^D-[1-9][0-9]*$",
+    "examples": [
+     "D-3051"
+    ]
+   },
+   "ClientName": {
+    "type": "string",
+    "pattern": "^[a-z0-9][a-z0-9-]{0,47}$",
+    "description": "A client's stable name, agent or human (`agent-a`, `alice`)."
+   },
+   "TrackId": {
+    "type": "string",
+    "pattern": "^[a-z0-9][a-z0-9-]{0,47}$",
+    "examples": [
+     "release-2-4"
+    ]
+   },
+   "Kind": {
+    "type": "string",
+    "enum": [
+     "task",
+     "decision",
+     "approval",
+     "event"
+    ],
+    "description": "`decision`: a human chooses; `approval`: a human says go; `event`: happens at a time by itself."
+   },
+   "State": {
+    "type": "string",
+    "enum": [
+     "next",
+     "running",
+     "waiting",
+     "done",
+     "dropped"
+    ],
+    "description": "`next` and `waiting` are derived by Waypoint; `running`, `done`, `dropped` are set by the owner."
+   },
+   "Role": {
+    "type": "string",
+    "enum": [
+     "agent",
+     "human",
+     "coordinator",
+     "reader",
+     "deliverer",
+     "unknown"
+    ],
+    "description": "`unknown`: the name is used by an item but no such client exists (any more)."
+   },
+   "LadderAction": {
+    "type": "string",
+    "enum": [
+     "nudge",
+     "escalate",
+     "notify",
+     "flag"
+    ]
+   },
+   "Delay": {
+    "type": "string",
+    "pattern": "^[0-9]{1,4}[mhd]$",
+    "description": "Minutes, hours or days after the due time, e.g. `0m`, `90m`, `1h`, `2d`."
+   },
+   "Title": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 80,
+    "description": "One line, readable without context."
+   },
+   "Label": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 24,
+    "description": "Short form of the title for tight places (timeline stops)."
+   },
+   "Note": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 200,
+    "description": "One line."
+   },
+   "ConditionInput": {
+    "description": "Another item, or a time.",
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "item"
+      ],
+      "properties": {
+       "item": {
+        "$ref": "#/components/schemas/ItemId"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "time"
+      ],
+      "properties": {
+       "time": {
+        "$ref": "#/components/schemas/Timestamp"
+       }
+      }
+     }
+    ]
+   },
+   "Condition": {
+    "description": "A condition as Waypoint reports it.",
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "item",
+       "met",
+       "met_at"
+      ],
+      "properties": {
+       "item": {
+        "$ref": "#/components/schemas/ItemId"
+       },
+       "met": {
+        "type": "boolean",
+        "description": "The item is done."
+       },
+       "met_at": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/Timestamp"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "time",
+       "met",
+       "met_at"
+      ],
+      "properties": {
+       "time": {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       "met": {
+        "type": "boolean",
+        "description": "The time has passed."
+       },
+       "met_at": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/Timestamp"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       }
+      }
+     }
+    ]
+   },
+   "Question": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "text"
+    ],
+    "properties": {
+     "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "What the human is asked."
+     },
+     "options": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 80
+      },
+      "default": []
+     },
+     "recommendation": {
+      "oneOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The asking owner's recommendation, usually one of the options."
+     }
+    }
+   },
+   "AnswerAtInput": {
+    "description": "Where the person answers a decision or approval: as a comment on an issue or pull request\n(its URL), or in a session (its client name; never a session URL or id).\n",
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "issue"
+      ],
+      "properties": {
+       "issue": {
+        "type": "string",
+        "maxLength": 500,
+        "pattern": "^https://[^\\s/]+/[^\\s]+/(issues|pull|pulls|merge_requests)/[0-9]+$"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "session"
+      ],
+      "properties": {
+       "session": {
+        "$ref": "#/components/schemas/ClientName"
+       }
+      }
+     }
+    ]
+   },
+   "AnswerAt": {
+    "description": "`AnswerAtInput` as Waypoint reports it; `default` is true when nobody set it.",
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "issue",
+       "default"
+      ],
+      "properties": {
+       "issue": {
+        "type": "string",
+        "maxLength": 500
+       },
+       "default": {
+        "type": "boolean"
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "session",
+       "default"
+      ],
+      "properties": {
+       "session": {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       "default": {
+        "type": "boolean"
+       }
+      }
+     }
+    ]
+   },
+   "When": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "start",
+     "precision"
+    ],
+    "description": "When it happens. With precision `minute` or `hour`, `start` and `end` are timestamps\n(truncated to the precision); with precision `day` they are days. `end` is for spans\n(a soak from–until).\n",
+    "properties": {
+     "start": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "$ref": "#/components/schemas/Day"
+       }
+      ]
+     },
+     "end": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "$ref": "#/components/schemas/Day"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "precision": {
+      "type": "string",
+      "enum": [
+       "minute",
+       "hour",
+       "day"
+      ]
+     }
+    }
+   },
+   "LadderStep": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "after",
+     "action"
+    ],
+    "properties": {
+     "after": {
+      "$ref": "#/components/schemas/Delay"
+     },
+     "action": {
+      "$ref": "#/components/schemas/LadderAction"
+     },
+     "to": {
+      "description": "The human to push to; required for `notify`, not allowed otherwise.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "StepTaken": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "action",
+     "at",
+     "to"
+    ],
+    "properties": {
+     "action": {
+      "$ref": "#/components/schemas/LadderAction"
+     },
+     "at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "to": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "caught_up": {
+      "type": "boolean",
+      "default": false,
+      "description": "Taken after Waypoint was down, as the furthest step reached by then."
+     }
+    }
+   },
+   "Link": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "url"
+    ],
+    "properties": {
+     "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://",
+      "maxLength": 500
+     },
+     "label": {
+      "oneOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "RiskSource": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "item",
+     "why"
+    ],
+    "description": "An item upstream (directly or further back) that is late or dropped.",
+    "properties": {
+     "item": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "why": {
+      "type": "string",
+      "enum": [
+       "late",
+       "dropped"
+      ]
+     },
+     "due_at": {
+      "description": "That item's due time, when `why` is `late`.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "Item": {
+    "description": "An item as Waypoint reports it.",
+    "allOf": [
+     {
+      "$ref": "#/components/schemas/ItemFields"
+     }
+    ],
+    "unevaluatedProperties": false
+   },
+   "ItemFields": {
+    "type": "object",
+    "required": [
+     "id",
+     "owner",
+     "track",
+     "title",
+     "label",
+     "kind",
+     "state",
+     "state_since",
+     "waits_on",
+     "waited_on_by",
+     "question",
+     "answer_at",
+     "running_until",
+     "running_overdue",
+     "when",
+     "due_at",
+     "wake_at",
+     "overdue",
+     "note",
+     "links",
+     "late",
+     "at_risk",
+     "at_risk_from",
+     "overdue_steps",
+     "version",
+     "created_at",
+     "created_by",
+     "updated_at",
+     "updated_by",
+     "done_at"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "description": "Short form for tight places; `null` means the page shortens the title.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Label"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kind": {
+      "$ref": "#/components/schemas/Kind"
+     },
+     "state": {
+      "$ref": "#/components/schemas/State"
+     },
+     "state_since": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "waits_on": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Condition"
+      }
+     },
+     "waited_on_by": {
+      "type": "array",
+      "description": "Items that have this item as a condition (met or not).",
+      "items": {
+       "$ref": "#/components/schemas/ItemId"
+      }
+     },
+     "question": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Question"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "answer_at": {
+      "description": "For decisions and approvals: where the person answers. When none was set and the item\nwas created by an agent, it is that agent's session, with `default: true`. `null` for\nother kinds, or when there is neither.\n",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AnswerAt"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "running_until": {
+      "description": "While `running`: until when the owner's claim lasts. Renewed by the owner's updates;\nwhen it passes the owner gets a `running_check`. `null` in every other state.\n",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "running_overdue": {
+      "type": "boolean",
+      "description": "Running, past `running_until`, and the owner was asked whether it still runs: a page\ncan draw \"running?\". It goes back to `next` if the owner doesn't update it in time.\n"
+     },
+     "when": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/When"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "due_at": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "wake_at": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "overdue": {
+      "type": "array",
+      "description": "This item's own ladder; empty means the deployment's default ladder applies.",
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "note": {
+      "description": "One line of current status; for a dropped item, the reason.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "links": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     },
+     "late": {
+      "type": "boolean",
+      "description": "Past `due_at` and not done or dropped."
+     },
+     "at_risk": {
+      "type": "boolean",
+      "description": "Waits",
+      "directly or further back": null,
+      "on something late or dropped.": null
+     },
+     "at_risk_from": {
+      "type": "array",
+      "description": "Why it is at risk; empty when `at_risk` is false.",
+      "items": {
+       "$ref": "#/components/schemas/RiskSource"
+      }
+     },
+     "overdue_steps": {
+      "type": "array",
+      "description": "Ladder steps taken since the current due time was set, oldest first.",
+      "items": {
+       "$ref": "#/components/schemas/StepTaken"
+      }
+     },
+     "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Goes up with every change."
+     },
+     "created_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "created_by": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "updated_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "updated_by": {
+      "description": "The client of the last change; `null` when the last change was Waypoint's own.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "done_at": {
+      "description": "When it became done or dropped.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "ItemDetail": {
+    "allOf": [
+     {
+      "$ref": "#/components/schemas/ItemFields"
+     }
+    ],
+    "type": "object",
+    "unevaluatedProperties": false,
+    "required": [
+     "history"
+    ],
+    "properties": {
+     "history": {
+      "type": "array",
+      "description": "Every change, oldest first.",
+      "items": {
+       "$ref": "#/components/schemas/HistoryEvent"
+      }
+     }
+    }
+   },
+   "HistoryEvent": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "at",
+     "by",
+     "event",
+     "changes",
+     "note"
+    ],
+    "properties": {
+     "at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "by": {
+      "description": "The client; `null` for Waypoint's own (derived states, the scheduler).",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "event": {
+      "type": "string",
+      "enum": [
+       "created",
+       "changed",
+       "derived",
+       "condition_met",
+       "ladder_step",
+       "message"
+      ],
+      "description": "`changed`: a client changed fields; `derived`: Waypoint changed the state or a flag;\n`condition_met`: one condition was met; `ladder_step`: a step was taken; `message`: a\nmessage about this item was queued for someone.\n"
+     },
+     "changes": {
+      "description": "Field name to `[old, new]`.",
+      "oneOf": [
+       {
+        "type": "object",
+        "additionalProperties": {
+         "type": "array",
+         "minItems": 2,
+         "maxItems": 2
+        }
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "oneOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "ItemCreate": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "track",
+     "title",
+     "kind"
+    ],
+    "properties": {
+     "owner": {
+      "description": "Default the caller. An agent may create items for another owner (handing over).",
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "$ref": "#/components/schemas/Label"
+     },
+     "kind": {
+      "$ref": "#/components/schemas/Kind"
+     },
+     "state": {
+      "description": "Only `running` may be given; otherwise Waypoint derives `next` or `waiting`.",
+      "type": "string",
+      "enum": [
+       "running"
+      ]
+     },
+     "running_until": {
+      "description": "With `state` running only; default now plus the deployment's running lease.",
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "waits_on": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+       "$ref": "#/components/schemas/ConditionInput"
+      }
+     },
+     "question": {
+      "description": "Required for `decision`, optional for `approval`, refused otherwise.",
+      "$ref": "#/components/schemas/Question"
+     },
+     "answer_at": {
+      "description": "Decisions and approvals only. Required when `links` hold an issue or pull request\n(say where the answer goes); otherwise it defaults to the creating agent's session.\n",
+      "$ref": "#/components/schemas/AnswerAtInput"
+     },
+     "when": {
+      "$ref": "#/components/schemas/When"
+     },
+     "due_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "wake_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "overdue": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "note": {
+      "$ref": "#/components/schemas/Note"
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     }
+    }
+   },
+   "ItemPatch": {
+    "type": "object",
+    "additionalProperties": false,
+    "minProperties": 1,
+    "properties": {
+     "if_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Refuse with `version_conflict` unless the item is at this version."
+     },
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "track": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Label"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "kind": {
+      "$ref": "#/components/schemas/Kind"
+     },
+     "state": {
+      "type": "string",
+      "enum": [
+       "running",
+       "done",
+       "dropped",
+       "next",
+       "waiting"
+      ],
+      "description": "`running`, `done`, `dropped` as given (`dropped` needs a `note`, the reason). `next` and\n`waiting` both mean \"not running (any more)\": Waypoint then derives which one applies;\non a done or dropped item they reopen it (dependents of a reopened done item that were\n`next` go back to `waiting`).\n"
+     },
+     "waits_on": {
+      "description": "Replaces the whole list.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+       "$ref": "#/components/schemas/ConditionInput"
+      }
+     },
+     "running_until": {
+      "description": "For a running item (or one this request sets running): until when it runs; in the\nfuture. Without it, the owner's updates renew the lease to now plus the default.\n",
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "add_waits_on": {
+      "description": "Adds conditions to the list (already present ones are ignored).",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+       "$ref": "#/components/schemas/ConditionInput"
+      }
+     },
+     "question": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Question"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "answer_at": {
+      "description": "Set or change where the answer goes; `null` goes back to the default.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/AnswerAtInput"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "when": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/When"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "due_at": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "wake_at": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "overdue": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/LadderStep"
+      }
+     },
+     "note": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     }
+    }
+   },
+   "AskRequest": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "human",
+     "title",
+     "question"
+    ],
+    "properties": {
+     "human": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "label": {
+      "$ref": "#/components/schemas/Label"
+     },
+     "question": {
+      "$ref": "#/components/schemas/Question"
+     },
+     "answer_at": {
+      "description": "Where the person answers; required when `links` hold an issue or pull request.",
+      "$ref": "#/components/schemas/AnswerAtInput"
+     },
+     "track": {
+      "description": "Default the asking item's track.",
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "due_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "note": {
+      "$ref": "#/components/schemas/Note"
+     },
+     "links": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     }
+    }
+   },
+   "AskResult": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "asked",
+     "item"
+    ],
+    "properties": {
+     "asked": {
+      "$ref": "#/components/schemas/Item"
+     },
+     "item": {
+      "$ref": "#/components/schemas/Item"
+     }
+    }
+   },
+   "Track": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "title",
+     "lead",
+     "note",
+     "order",
+     "archived"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/TrackId"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "lead": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "order": {
+      "type": "integer",
+      "description": "Display order",
+      "lowest first.": null
+     },
+     "archived": {
+      "type": "boolean"
+     }
+    }
+   },
+   "TrackPut": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "title"
+    ],
+    "properties": {
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "lead": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "note": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Note"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "order": {
+      "type": "integer",
+      "default": 0
+     },
+     "archived": {
+      "type": "boolean",
+      "default": false
+     }
+    }
+   },
+   "Owner": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "role",
+     "label"
+    ],
+    "properties": {
+     "role": {
+      "$ref": "#/components/schemas/Role"
+     },
+     "label": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "Display name; the client name if none is set."
+     }
+    }
+   },
+   "Owners": {
+    "type": "object",
+    "description": "Every client name used in the view (owners, leads, `created_by`), with its role.",
+    "propertyNames": {
+     "$ref": "#/components/schemas/ClientName"
+    },
+    "additionalProperties": {
+     "$ref": "#/components/schemas/Owner"
+    }
+   },
+   "Edge": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "from",
+     "to",
+     "met"
+    ],
+    "description": "`to` waits on `from`. Both are in the view's `items`.",
+    "properties": {
+     "from": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "to": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "met": {
+      "type": "boolean",
+      "description": "`from` is done."
+     }
+    }
+   },
+   "TimelineView": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "generated_at",
+     "now",
+     "tz",
+     "window",
+     "done_days",
+     "tracks",
+     "owners",
+     "items",
+     "edges"
+    ],
+    "properties": {
+     "generated_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "now": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "tz": {
+      "type": "string",
+      "description": "The deployment's IANA time zone, for display and for days.",
+      "examples": [
+       "Europe/Paris"
+      ]
+     },
+     "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "from",
+       "to"
+      ],
+      "properties": {
+       "from": {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       "to": {
+        "$ref": "#/components/schemas/Timestamp"
+       }
+      }
+     },
+     "done_days": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How long done and dropped items stay visible."
+     },
+     "tracks": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Track"
+      }
+     },
+     "owners": {
+      "$ref": "#/components/schemas/Owners"
+     },
+     "items": {
+      "type": "array",
+      "description": "Ordered by track order, then dependency order, then `id`.",
+      "items": {
+       "$ref": "#/components/schemas/Item"
+      }
+     },
+     "edges": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Edge"
+      }
+     }
+    }
+   },
+   "ChainStep": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "depth"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "depth": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1 for a direct link",
+      "2 one further": null,
+      "and so on.": null
+     }
+    }
+   },
+   "ForEntry": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "ready",
+     "since",
+     "unblocks",
+     "on_the_way"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "ready": {
+      "type": "boolean",
+      "description": "It is the human's turn (`next` or `running`); false while it still waits."
+     },
+     "since": {
+      "description": "When it became the human's turn (`ready`), or when it was created otherwise.",
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "unblocks": {
+      "type": "array",
+      "description": "Open items that wait on this one, directly or further on, nearest first.",
+      "items": {
+       "$ref": "#/components/schemas/ChainStep"
+      }
+     },
+     "on_the_way": {
+      "type": "array",
+      "description": "The open items this one still waits for, directly or further back, nearest first. Empty when `ready`.",
+      "items": {
+       "$ref": "#/components/schemas/ChainStep"
+      }
+     }
+    }
+   },
+   "ForView": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "generated_at",
+     "now",
+     "tz",
+     "human",
+     "entries",
+     "tracks",
+     "owners",
+     "items",
+     "edges"
+    ],
+    "properties": {
+     "generated_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "now": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "tz": {
+      "type": "string"
+     },
+     "human": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "entries": {
+      "type": "array",
+      "description": "The human's open items; ready ones first, each group by `since`, oldest first.",
+      "items": {
+       "$ref": "#/components/schemas/ForEntry"
+      }
+     },
+     "tracks": {
+      "type": "array",
+      "description": "The tracks of the items in this view.",
+      "items": {
+       "$ref": "#/components/schemas/Track"
+      }
+     },
+     "owners": {
+      "$ref": "#/components/schemas/Owners"
+     },
+     "items": {
+      "type": "array",
+      "description": "Every item the entries name (the human's own, their chains), each once.",
+      "items": {
+       "$ref": "#/components/schemas/Item"
+      }
+     },
+     "edges": {
+      "type": "array",
+      "description": "The dependency edges among `items`.",
+      "items": {
+       "$ref": "#/components/schemas/Edge"
+      }
+     }
+    }
+   },
+   "Delivery": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "recipient",
+     "kind",
+     "item",
+     "items",
+     "fell_due_at",
+     "attempt",
+     "late",
+     "text",
+     "summary",
+     "links"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/DeliveryId"
+     },
+     "recipient": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "wake",
+       "unblocked",
+       "replan",
+       "at_risk",
+       "nudge",
+       "escalate",
+       "notify",
+       "undeliverable",
+       "deliverer_silent",
+       "outage",
+       "running_check"
+      ],
+      "description": "What the message is about; see `docs/API.md` (Deliveries)."
+     },
+     "item": {
+      "description": "The item the message is about, if any.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ItemId"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "items": {
+      "type": "array",
+      "description": "Other items it names (for `unblocked`, the item that was done).",
+      "items": {
+       "$ref": "#/components/schemas/ItemId"
+      }
+     },
+     "fell_due_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "2 or more when handed out again."
+     },
+     "late": {
+      "description": "Set when the message goes out later than it fell due for a known reason.",
+      "oneOf": [
+       {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "due_at",
+         "reason",
+         "down_from",
+         "down_until"
+        ],
+        "properties": {
+         "due_at": {
+          "$ref": "#/components/schemas/Timestamp"
+         },
+         "reason": {
+          "type": "string",
+          "enum": [
+           "waypoint_down",
+           "recipient_away"
+          ]
+         },
+         "down_from": {
+          "oneOf": [
+           {
+            "$ref": "#/components/schemas/Timestamp"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "down_until": {
+          "oneOf": [
+           {
+            "$ref": "#/components/schemas/Timestamp"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         }
+        }
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "text": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "The full message for an agent, ready to type in."
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 140,
+      "description": "Title and owner only; the only text a push adapter may send."
+     },
+     "links": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Link"
+      }
+     }
+    }
+   },
+   "DeliveryBatch": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "deliveries",
+     "lease_seconds"
+    ],
+    "properties": {
+     "deliveries": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Delivery"
+      }
+     },
+     "lease_seconds": {
+      "type": "integer",
+      "description": "An unconfirmed message is handed out again after this long."
+     }
+    }
+   },
+   "AckRequest": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "result"
+    ],
+    "properties": {
+     "result": {
+      "type": "string",
+      "enum": [
+       "delivered",
+       "undeliverable"
+      ],
+      "description": "`undeliverable`: the adapter gave up (for tmux, after 30 minutes); Waypoint escalates it."
+     },
+     "detail": {
+      "type": "string",
+      "maxLength": 200
+     }
+    }
+   },
+   "Ack": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "result",
+     "acked_at"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/DeliveryId"
+     },
+     "result": {
+      "type": "string",
+      "enum": [
+       "delivered",
+       "undeliverable"
+      ]
+     },
+     "acked_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     }
+    }
+   },
+   "Client": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "name",
+     "role",
+     "label",
+     "deliverer",
+     "created_at",
+     "retired_at",
+     "last_seen"
+    ],
+    "properties": {
+     "name": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "role": {
+      "type": "string",
+      "enum": [
+       "agent",
+       "human",
+       "coordinator",
+       "reader",
+       "deliverer"
+      ]
+     },
+     "label": {
+      "oneOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "deliverer": {
+      "description": "The deliverer that reaches this client, if any.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "created_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "retired_at": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "last_seen": {
+      "description": "For a deliverer, its last fetch; otherwise null.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
+   "ClientCreate": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "name",
+     "role"
+    ],
+    "properties": {
+     "name": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "role": {
+      "type": "string",
+      "enum": [
+       "agent",
+       "human",
+       "coordinator",
+       "reader",
+       "deliverer"
+      ]
+     },
+     "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+     },
+     "deliverer": {
+      "$ref": "#/components/schemas/ClientName"
+     }
+    }
+   },
+   "ClientPatch": {
+    "type": "object",
+    "additionalProperties": false,
+    "minProperties": 1,
+    "properties": {
+     "label": {
+      "oneOf": [
+       {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "deliverer": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ClientName"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "retired": {
+      "type": "boolean",
+      "const": true,
+      "description": "Retire the client. There is no un-retiring."
+     }
+    }
+   },
+   "ClientWithToken": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "client",
+     "token"
+    ],
+    "properties": {
+     "client": {
+      "$ref": "#/components/schemas/Client"
+     },
+     "token": {
+      "type": "string",
+      "description": "The client's token. Shown only in this answer; store it in a file only its user can read."
+     }
+    }
+   },
+   "StatusItem": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "owner",
+     "title",
+     "since"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/ItemId"
+     },
+     "owner": {
+      "$ref": "#/components/schemas/ClientName"
+     },
+     "title": {
+      "$ref": "#/components/schemas/Title"
+     },
+     "since": {
+      "description": "Late since (due time), last updated (running), or created (unknown owner).",
+      "$ref": "#/components/schemas/Timestamp"
+     }
+    }
+   },
+   "Status": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "generated_at",
+     "version",
+     "ok",
+     "scheduler",
+     "deliverers",
+     "recipients_without_deliverer",
+     "stuck_deliveries",
+     "late_items",
+     "unknown_owners",
+     "running_stale"
+    ],
+    "properties": {
+     "generated_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "version": {
+      "type": "string"
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "last_pass",
+       "behind"
+      ],
+      "properties": {
+       "last_pass": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/Timestamp"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "behind": {
+        "type": "boolean",
+        "description": "No pass for more than a minute."
+       }
+      }
+     },
+     "deliverers": {
+      "type": "array",
+      "description": "Every deliverer that serves at least one recipient.",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "name",
+        "recipients",
+        "last_seen",
+        "silent"
+       ],
+       "properties": {
+        "name": {
+         "$ref": "#/components/schemas/ClientName"
+        },
+        "recipients": {
+         "type": "integer",
+         "minimum": 1
+        },
+        "last_seen": {
+         "oneOf": [
+          {
+           "$ref": "#/components/schemas/Timestamp"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "silent": {
+         "type": "boolean",
+         "description": "No fetch for 5 minutes."
+        }
+       }
+      }
+     },
+     "recipients_without_deliverer": {
+      "type": "array",
+      "description": "Clients that own open items or have waiting messages but no deliverer.",
+      "items": {
+       "$ref": "#/components/schemas/ClientName"
+      }
+     },
+     "stuck_deliveries": {
+      "type": "array",
+      "description": "Messages not confirmed 30 minutes after they fell due.",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "id",
+        "recipient",
+        "kind",
+        "item",
+        "fell_due_at",
+        "attempt"
+       ],
+       "properties": {
+        "id": {
+         "$ref": "#/components/schemas/DeliveryId"
+        },
+        "recipient": {
+         "$ref": "#/components/schemas/ClientName"
+        },
+        "kind": {
+         "type": "string"
+        },
+        "item": {
+         "oneOf": [
+          {
+           "$ref": "#/components/schemas/ItemId"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "fell_due_at": {
+         "$ref": "#/components/schemas/Timestamp"
+        },
+        "attempt": {
+         "type": "integer",
+         "minimum": 0
+        }
+       }
+      }
+     },
+     "late_items": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/StatusItem"
+      }
+     },
+     "unknown_owners": {
+      "type": "array",
+      "description": "Open items whose owner is not a registered, unretired client.",
+      "items": {
+       "$ref": "#/components/schemas/StatusItem"
+      }
+     },
+     "running_stale": {
+      "type": "array",
+      "description": "Items `running` for more than a day without an update.",
+      "items": {
+       "$ref": "#/components/schemas/StatusItem"
+      }
+     }
+    }
+   },
+   "Health": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "status",
+     "version"
+    ],
+    "properties": {
+     "status": {
+      "type": "string",
+      "const": "ok"
+     },
+     "version": {
+      "type": "string"
+     }
+    }
+   },
+   "Error": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "error"
+    ],
+    "properties": {
+     "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "code",
+       "message"
+      ],
+      "properties": {
+       "code": {
+        "type": "string",
+        "enum": [
+         "invalid",
+         "unauthorized",
+         "forbidden",
+         "not_found",
+         "loop",
+         "version_conflict",
+         "content",
+         "unavailable"
+        ]
+       },
+       "message": {
+        "type": "string",
+        "description": "For humans; never echoes the request or a token."
+       },
+       "field": {
+        "type": "string",
+        "description": "The offending field",
+        "for `invalid` and `content`.": null
+       },
+       "cycle": {
+        "type": "array",
+        "description": "For `loop`, the items of the loop, first one repeated at the end.",
+        "items": {
+         "$ref": "#/components/schemas/ItemId"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

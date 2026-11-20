@@ -1,0 +1,31 @@
+# waypointd configuration. Every key is optional; the values shown are the defaults
+# unless noted. Keep your real configuration outside the repository.
+
+[server]
+# Addresses to listen on. Loopback only by default. Add another address of this machine
+# (e.g. a private network's) explicitly; "0.0.0.0" and "::" are refused.
+listen = ["127.0.0.1"]
+port = 7130
+
+[store]
+database = "/var/lib/waypoint/waypoint.db"
+
+[site]
+# Time zone for display and for day-precision dates (IANA name).
+tz = "UTC"
+# The client told about escalations, undeliverable messages and outages.
+# Default: the first registered client with role "coordinator".
+# coordinator = "coordinator"
+# "running" is a lease: it lasts this long unless the owner renews it with any update; then the
+# owner is asked whether it still runs, and it goes back to next this long after that question
+# reached the owner without an update.
+running_lease = "2h"
+running_grace = "1h"
+# How long done and dropped items stay in the views.
+done_days = 3
+# The overdue ladder for items that don't carry their own.
+default_ladder = [
+  { after = "0m", action = "nudge" },
+  { after = "1h", action = "escalate" },
+  { after = "1h", action = "flag" },
+]

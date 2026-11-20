@@ -1,0 +1,718 @@
+{
+  "generated_at": "2026-03-10T09:30:00Z",
+  "now": "2026-03-10T09:30:00Z",
+  "tz": "Europe/Paris",
+  "window": {
+    "from": "2026-03-07T09:30:00Z",
+    "to": "2026-03-19T09:30:00Z"
+  },
+  "done_days": 3,
+  "tracks": [
+    {
+      "id": "release-2-4",
+      "title": "Release 2.4",
+      "lead": "agent-a",
+      "note": null,
+      "order": 10,
+      "archived": false
+    },
+    {
+      "id": "build-infra",
+      "title": "Build infrastructure",
+      "lead": "agent-b",
+      "note": null,
+      "order": 20,
+      "archived": false
+    },
+    {
+      "id": "docs-site",
+      "title": "Docs site",
+      "lead": "agent-c",
+      "note": "no fixed dates",
+      "order": 30,
+      "archived": false
+    }
+  ],
+  "owners": {
+    "agent-a": {
+      "role": "agent",
+      "label": "Release agent"
+    },
+    "agent-b": {
+      "role": "agent",
+      "label": "Build agent"
+    },
+    "agent-c": {
+      "role": "agent",
+      "label": "Docs agent"
+    },
+    "alice": {
+      "role": "human",
+      "label": "Alice"
+    },
+    "coordinator": {
+      "role": "coordinator",
+      "label": "Coordinator"
+    }
+  },
+  "items": [
+    {
+      "id": "W-101",
+      "owner": "agent-a",
+      "track": "release-2-4",
+      "title": "Release candidate 2.4-rc1 built",
+      "label": "rc1 built",
+      "kind": "task",
+      "state": "done",
+      "state_since": "2026-03-09T15:10:00Z",
+      "waits_on": [],
+      "waited_on_by": [
+        "W-102"
+      ],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": "all checks green",
+      "links": [
+        {
+          "url": "https://git.example.org/acme/app/pull/88",
+          "label": "PR #88"
+        }
+      ],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 4,
+      "created_at": "2026-03-06T10:00:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-09T15:10:00Z",
+      "updated_by": "agent-a",
+      "done_at": "2026-03-09T15:10:00Z"
+    },
+    {
+      "id": "W-105",
+      "owner": "agent-a",
+      "track": "release-2-4",
+      "title": "Release notes for 2.4",
+      "label": "release notes",
+      "kind": "task",
+      "state": "next",
+      "state_since": "2026-03-07T09:00:00Z",
+      "waits_on": [],
+      "waited_on_by": [
+        "W-104"
+      ],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": "2026-03-10T08:00:00Z",
+      "wake_at": null,
+      "overdue": [],
+      "note": "draft half done",
+      "links": [],
+      "late": true,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [
+        {
+          "action": "nudge",
+          "at": "2026-03-10T08:00:10Z",
+          "to": null,
+          "caught_up": false
+        },
+        {
+          "action": "escalate",
+          "at": "2026-03-10T09:00:05Z",
+          "to": null,
+          "caught_up": false
+        },
+        {
+          "action": "flag",
+          "at": "2026-03-10T09:00:05Z",
+          "to": null,
+          "caught_up": false
+        }
+      ],
+      "version": 3,
+      "created_at": "2026-03-07T09:00:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-09T17:40:00Z",
+      "updated_by": "agent-a",
+      "done_at": null
+    },
+    {
+      "id": "W-107",
+      "owner": "agent-a",
+      "track": "release-2-4",
+      "title": "Hotfix release 2.3.5",
+      "label": "hotfix 2.3.5",
+      "kind": "task",
+      "state": "dropped",
+      "state_since": "2026-03-08T11:20:00Z",
+      "waits_on": [],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": "folded into 2.4",
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 2,
+      "created_at": "2026-03-04T08:00:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-08T11:20:00Z",
+      "updated_by": "agent-a",
+      "done_at": "2026-03-08T11:20:00Z"
+    },
+    {
+      "id": "W-102",
+      "owner": "agent-a",
+      "track": "release-2-4",
+      "title": "Staging soak of 2.4-rc1",
+      "label": "staging soak",
+      "kind": "event",
+      "state": "running",
+      "state_since": "2026-03-09T16:00:00Z",
+      "waits_on": [
+        {
+          "item": "W-101",
+          "met": true,
+          "met_at": "2026-03-09T15:10:00Z"
+        }
+      ],
+      "waited_on_by": [
+        "W-103"
+      ],
+      "question": null,
+      "answer_at": null,
+      "running_until": "2026-03-11T16:00:00Z",
+      "running_overdue": false,
+      "when": {
+        "start": "2026-03-09T16:00:00Z",
+        "end": "2026-03-11T16:00:00Z",
+        "precision": "minute"
+      },
+      "due_at": null,
+      "wake_at": "2026-03-11T16:15:00Z",
+      "overdue": [],
+      "note": "no errors after 17 hours",
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 5,
+      "created_at": "2026-03-06T10:05:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-09T16:00:00Z",
+      "updated_by": "agent-a",
+      "done_at": null
+    },
+    {
+      "id": "W-103",
+      "owner": "alice",
+      "track": "release-2-4",
+      "title": "Go for the production release of 2.4",
+      "label": "go for production",
+      "kind": "approval",
+      "state": "waiting",
+      "state_since": "2026-03-06T10:06:00Z",
+      "waits_on": [
+        {
+          "item": "W-102",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [
+        "W-104"
+      ],
+      "question": {
+        "text": "Release 2.4 to production once the staging soak is clean?",
+        "options": [
+          "go",
+          "hold"
+        ],
+        "recommendation": "go"
+      },
+      "answer_at": {
+        "session": "agent-a",
+        "default": true
+      },
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-06T10:06:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-06T10:06:00Z",
+      "updated_by": "agent-a",
+      "done_at": null
+    },
+    {
+      "id": "W-104",
+      "owner": "agent-a",
+      "track": "release-2-4",
+      "title": "Production release of 2.4",
+      "label": "production release",
+      "kind": "task",
+      "state": "waiting",
+      "state_since": "2026-03-06T10:08:00Z",
+      "waits_on": [
+        {
+          "item": "W-103",
+          "met": false,
+          "met_at": null
+        },
+        {
+          "item": "W-110",
+          "met": false,
+          "met_at": null
+        },
+        {
+          "item": "W-105",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [
+        "W-106"
+      ],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": {
+        "start": "2026-03-12",
+        "end": null,
+        "precision": "day"
+      },
+      "due_at": "2026-03-12T17:00:00Z",
+      "wake_at": null,
+      "overdue": [
+        {
+          "after": "0m",
+          "action": "nudge"
+        },
+        {
+          "after": "1h",
+          "action": "escalate"
+        },
+        {
+          "after": "1h",
+          "action": "flag"
+        },
+        {
+          "after": "16h",
+          "action": "notify",
+          "to": "alice"
+        }
+      ],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": true,
+      "at_risk_from": [
+        {
+          "item": "W-105",
+          "why": "late",
+          "due_at": "2026-03-10T08:00:00Z"
+        }
+      ],
+      "overdue_steps": [],
+      "version": 3,
+      "created_at": "2026-03-06T10:08:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-06T10:08:00Z",
+      "updated_by": "agent-a",
+      "done_at": null
+    },
+    {
+      "id": "W-106",
+      "owner": "agent-c",
+      "track": "release-2-4",
+      "title": "Announce 2.4 on the blog and the mailing list",
+      "label": "announce 2.4",
+      "kind": "task",
+      "state": "waiting",
+      "state_since": "2026-03-06T10:10:00Z",
+      "waits_on": [
+        {
+          "item": "W-104",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": true,
+      "at_risk_from": [
+        {
+          "item": "W-105",
+          "why": "late",
+          "due_at": "2026-03-10T08:00:00Z"
+        }
+      ],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-06T10:10:00Z",
+      "created_by": "agent-a",
+      "updated_at": "2026-03-06T10:10:00Z",
+      "updated_by": "agent-a",
+      "done_at": null
+    },
+    {
+      "id": "W-111",
+      "owner": "alice",
+      "track": "build-infra",
+      "title": "Choose the database migration strategy for 2.4",
+      "label": "migration strategy",
+      "kind": "decision",
+      "state": "next",
+      "state_since": "2026-03-08T11:00:00Z",
+      "waits_on": [],
+      "waited_on_by": [
+        "W-110",
+        "W-120"
+      ],
+      "question": {
+        "text": "Migrate online (slower, no downtime) or in a 30-minute offline window?",
+        "options": [
+          "online",
+          "offline window"
+        ],
+        "recommendation": "online: no downtime, and the tool already supports it"
+      },
+      "answer_at": {
+        "issue": "https://git.example.org/acme/app/issues/31",
+        "default": false
+      },
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": null,
+      "links": [
+        {
+          "url": "https://docs.example.org/plans/migration-2-4",
+          "label": "plan"
+        },
+        {
+          "url": "https://git.example.org/acme/app/issues/31",
+          "label": "#31"
+        }
+      ],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-08T11:00:00Z",
+      "created_by": "agent-b",
+      "updated_at": "2026-03-08T11:00:00Z",
+      "updated_by": "agent-b",
+      "done_at": null
+    },
+    {
+      "id": "W-112",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Rotate the staging deploy credentials",
+      "label": null,
+      "kind": "task",
+      "state": "waiting",
+      "state_since": "2026-03-09T12:00:00Z",
+      "waits_on": [
+        {
+          "time": "2026-03-12T08:00:00Z",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": "2026-03-12T08:00:00Z",
+      "overdue": [],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-09T12:00:00Z",
+      "created_by": "agent-b",
+      "updated_at": "2026-03-09T12:00:00Z",
+      "updated_by": "agent-b",
+      "done_at": null
+    },
+    {
+      "id": "W-113",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Upstream database driver 5.0 expected",
+      "label": "driver 5.0 out",
+      "kind": "event",
+      "state": "waiting",
+      "state_since": "2026-03-09T12:30:00Z",
+      "waits_on": [
+        {
+          "time": "2026-03-12T23:00:00Z",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": {
+        "start": "2026-03-13",
+        "end": null,
+        "precision": "day"
+      },
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": "maintainers said about Friday",
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-09T12:30:00Z",
+      "created_by": "agent-b",
+      "updated_at": "2026-03-09T12:30:00Z",
+      "updated_by": "agent-b",
+      "done_at": null
+    },
+    {
+      "id": "W-114",
+      "owner": "alice",
+      "track": "build-infra",
+      "title": "Renew the example.org domain",
+      "label": "renew domain",
+      "kind": "task",
+      "state": "next",
+      "state_since": "2026-03-05T09:00:00Z",
+      "waits_on": [],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": "2026-03-20T17:00:00Z",
+      "wake_at": null,
+      "overdue": [],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-05T09:00:00Z",
+      "created_by": "coordinator",
+      "updated_at": "2026-03-05T09:00:00Z",
+      "updated_by": "coordinator",
+      "done_at": null
+    },
+    {
+      "id": "W-110",
+      "owner": "agent-b",
+      "track": "build-infra",
+      "title": "Migration tool supports the 2.4 schema",
+      "label": "migration tool",
+      "kind": "task",
+      "state": "waiting",
+      "state_since": "2026-03-05T14:00:00Z",
+      "waits_on": [
+        {
+          "item": "W-111",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [
+        "W-104"
+      ],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": "2026-03-11T12:00:00Z",
+      "wake_at": null,
+      "overdue": [],
+      "note": "both strategies prototyped; waiting for the choice",
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 4,
+      "created_at": "2026-03-05T14:00:00Z",
+      "created_by": "agent-b",
+      "updated_at": "2026-03-05T14:00:00Z",
+      "updated_by": "agent-b",
+      "done_at": null
+    },
+    {
+      "id": "W-121",
+      "owner": "agent-c",
+      "track": "docs-site",
+      "title": "Move the docs search to the new index",
+      "label": "docs search",
+      "kind": "task",
+      "state": "running",
+      "state_since": "2026-03-09T08:00:00Z",
+      "waits_on": [],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": "2026-03-10T11:00:00Z",
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": "half the pages reindexed",
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 6,
+      "created_at": "2026-03-02T10:00:00Z",
+      "created_by": "agent-c",
+      "updated_at": "2026-03-09T08:00:00Z",
+      "updated_by": "agent-c",
+      "done_at": null
+    },
+    {
+      "id": "W-120",
+      "owner": "agent-c",
+      "track": "docs-site",
+      "title": "Migration guide for 2.4",
+      "label": "migration guide",
+      "kind": "task",
+      "state": "waiting",
+      "state_since": "2026-03-08T11:05:00Z",
+      "waits_on": [
+        {
+          "item": "W-111",
+          "met": false,
+          "met_at": null
+        }
+      ],
+      "waited_on_by": [],
+      "question": null,
+      "answer_at": null,
+      "running_until": null,
+      "running_overdue": false,
+      "when": null,
+      "due_at": null,
+      "wake_at": null,
+      "overdue": [],
+      "note": null,
+      "links": [],
+      "late": false,
+      "at_risk": false,
+      "at_risk_from": [],
+      "overdue_steps": [],
+      "version": 1,
+      "created_at": "2026-03-08T11:05:00Z",
+      "created_by": "agent-c",
+      "updated_at": "2026-03-08T11:05:00Z",
+      "updated_by": "agent-c",
+      "done_at": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "W-101",
+      "to": "W-102",
+      "met": true
+    },
+    {
+      "from": "W-102",
+      "to": "W-103",
+      "met": false
+    },
+    {
+      "from": "W-103",
+      "to": "W-104",
+      "met": false
+    },
+    {
+      "from": "W-110",
+      "to": "W-104",
+      "met": false
+    },
+    {
+      "from": "W-105",
+      "to": "W-104",
+      "met": false
+    },
+    {
+      "from": "W-104",
+      "to": "W-106",
+      "met": false
+    },
+    {
+      "from": "W-111",
+      "to": "W-110",
+      "met": false
+    },
+    {
+      "from": "W-111",
+      "to": "W-120",
+      "met": false
+    }
+  ]
+}
