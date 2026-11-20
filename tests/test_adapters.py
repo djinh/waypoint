@@ -354,7 +354,7 @@ def test_dashes_in_output_above_the_box_dont_confuse_it():
     assert input_box(only_one_rule) is None
 
 
-# ---------------------------------------------------------------------- busy panes and lost Enters (#41)
+# ---------------------------------------------------------------------- busy panes and lost Enters
 
 from waypoint.adapters import BUSY, CLEARED, box_text, pane_busy  # noqa: E402
 
@@ -439,11 +439,11 @@ def test_enter_that_didnt_take_is_sent_once_more():
 def test_a_line_that_stays_in_the_box_is_reported_not_delivered():
     idle = status_pane(IDLE_STATUS[0])
     # Claude Code wraps a long input over several lines; it is still our line
-    stuck = status_pane(IDLE_STATUS[0], box=f"❯ [waypoint] Reminder: W-1\n  (soak) next line")
+    stuck = status_pane(IDLE_STATUS[0], box="❯ [waypoint] Reminder: W-1\n  (soak) next line")
     fake = FakeTmux([idle, idle, stuck, stuck])
     got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
     assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
-    # never more than one extra Enter; the clear (#50) is tried, and the box didn't empty
+    # never more than one extra Enter; the clear is tried, and the box didn't empty
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
 
 
@@ -494,7 +494,7 @@ def test_our_line_is_recognised_however_it_wraps():
 
 
 
-# ---------------------------------------------------------------------- lines left unsent (#50)
+# ---------------------------------------------------------------------- lines left unsent
 
 def stuck_box(line: str) -> str:
     return status_pane(IDLE_STATUS[0], box=f"❯\u00a0{line}")
@@ -569,7 +569,7 @@ def test_a_busy_pane_with_our_line_is_left_alone():
 
 
 
-# ---------------------------------------------------------------------- after a clear (#52)
+# ---------------------------------------------------------------------- after a clear
 
 def test_repeats_for_one_message_are_logged_first_and_last(caplog):
     idle = status_pane(IDLE_STATUS[0])

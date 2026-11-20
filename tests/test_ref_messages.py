@@ -117,7 +117,7 @@ def test_real_messages_of_every_kind_carry_no_client_text(store, tokens, tracks,
            due_at="2026-03-10T09:00:00Z", overdue=[{"after": "0m", "action": "nudge"},
                                                   {"after": "0m", "action": "escalate"},
                                                   {"after": "0m", "action": "flag"}])
-    b = mk("agent-b", title, label=label, note=note, waits_on=[{"item": a["id"]}])
+    mk("agent-b", title, label=label, note=note, waits_on=[{"item": a["id"]}])
     c = mk("agent-c", title, label=label, note=note)
     mk("agent-b", title, label=label, note=note, waits_on=[{"item": c["id"]}])  # another owner: told
     sched.run_pass()  # wake, nudge, escalate, at_risk

@@ -212,7 +212,8 @@ def test_example_config_loads(tmp_path, monkeypatch):
     tok = tmp_path / "token"
     tok.write_text("t0ken\n")
     cfg = tmp_path / "deliver.toml"
-    cfg.write_text(text.replace('"/etc/waypoint/host-1.token"', f'"{tok}"'))
+    cfg.write_text(text.replace('"~/.config/waypoint/tokens/host-1.token"', f'"{tok}"'))
+    assert str(tok) in cfg.read_text()
     client, adapters = deliver.load(str(cfg))
     assert sorted(adapters) == ["agent-a", "alice", "ops-bot"]
     assert client.base == "http://127.0.0.1:7130"

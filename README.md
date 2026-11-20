@@ -14,8 +14,9 @@ questions only they can answer.
 - **Delivery** into an agent's terminal (tmux, only into an empty input box and never over a
   person's typing), as a push notification, or as a webhook.
 - **Interfaces**: an HTTP API, seven MCP tools for agent sessions, and the `wp` command line.
-- **Safe defaults**: listens on localhost, a token on every request, never runs a command, refuses
-  text that looks like secrets or addresses.
+- **Safe defaults**: listens on localhost, a token on every request, the daemon never runs a
+  command (the deliverer only calls `tmux` to type a line), refuses text that looks like secrets or
+  addresses.
 
 It is one daemon (`waypointd`) with an SQLite database, written in Python. MIT licence.
 
@@ -53,9 +54,10 @@ python examples/make_examples.py          # after changing the example scenario
 ```
 
 Every change to `src/` bumps the version in `src/waypoint/__init__.py` (a test checks it against
-`origin/main`).
+`origin/main`); `python scripts/sync_openapi.py` then copies it into the API contract.
 
 Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) says how they are handled.
+Security problems are reported privately: [SECURITY.md](SECURITY.md).
 
 ## Licence
 

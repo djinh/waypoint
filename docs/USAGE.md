@@ -2,8 +2,9 @@
 
 How to talk to a running Waypoint: the command line (`wp`), the MCP tools agents use, the HTTP API
 underneath both, and what the delivery adapters send. The examples follow one small story: an agent
-`builder` prepares a release that waits on a decision by a person, `alice`. The outputs are real
-(times shown in the deployment's zone). Installing and configuring are in
+`builder` prepares a release that waits on a decision by a person, `alice`. The outputs are real.
+`wp` and the MCP tools show times, and read times typed without a zone, in the zone of the machine
+they run on; messages from Waypoint itself use the deployment's zone (`site.tz`). Installing and configuring are in
 [INSTALL.md](INSTALL.md) and [CONFIGURATION.md](CONFIGURATION.md); the full API contract is
 [API.md](API.md) and [api/openapi.yaml](api/openapi.yaml).
 
@@ -63,6 +64,8 @@ coordinators), `wp health`.
 ## The MCP tools (for agent sessions)
 
 `waypoint-mcp` gives an agent seven tools. Answers are short text, one line per item, as above.
+Line breaks and other control characters in text other clients wrote are shown as spaces (in `wp`
+too), so such text never starts a line of its own.
 
 | Tool | Parameters | Does |
 | --- | --- | --- |

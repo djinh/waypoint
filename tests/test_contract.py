@@ -392,3 +392,8 @@ def test_packaged_spec_matches_the_yaml(spec):
     """src/waypoint/openapi.json is what the daemon validates with; it must be the YAML's copy."""
     packaged = json.loads((ROOT / "src" / "waypoint" / "openapi.json").read_text(encoding="utf-8"))
     assert packaged == spec, "run python scripts/sync_openapi.py"
+
+
+def test_contract_version_is_the_package_version(spec):
+    import waypoint
+    assert spec["info"]["version"] == waypoint.__version__, "run python scripts/sync_openapi.py"

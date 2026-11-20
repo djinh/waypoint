@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timedelta
 
@@ -29,10 +30,14 @@ def delivery_id(num: int) -> str:
     return f"D-{num}"
 
 
+_DELIVERY_ID = re.compile(r"D-([1-9][0-9]{0,17})")
+
+
 def delivery_num(did: str) -> int:
-    if not isinstance(did, str) or not did.startswith("D-") or not did[2:].isdigit():
+    m = _DELIVERY_ID.fullmatch(did) if isinstance(did, str) else None
+    if m is None:
         raise ApiError("not_found", "no such delivery")
-    return int(did[2:])
+    return int(m.group(1))
 
 
 class Signal:
@@ -81,7 +86,7 @@ class Deliveries:
     # ------------------------------------------------------------------ handing out
     def _pending_sql(self) -> str:
         return ("FROM messages m JOIN clients r ON r.name = m.recipient "
-                "WHERE r.deliverer = ? AND m.acked_at IS NULL AND m.withdrawn_at IS NULL")
+                "WHERE r.deliverer = ? AND r.retired_at IS NULL AND m.acked_at IS NULL AND m.withdrawn_at IS NULL")
 
     def fetch(self, caller: Client, limit: int = 50) -> list[dict]:
         """Hand out what is ready for this deliverer now (possibly nothing), taking leases."""
@@ -181,7 +186,7 @@ class Deliveries:
             raise ApiError("content", "detail: looks like it holds data that must not be stored", field="detail")
         st = self.store
         with st.tx() as c:
-            r = c.execute(f"SELECT m.* FROM messages m JOIN clients r ON r.name = m.recipient "
+            r = c.execute("SELECT m.* FROM messages m JOIN clients r ON r.name = m.recipient "
                           "WHERE m.num = ? AND r.deliverer = ?", (num, caller.name)).fetchone()
             if r is None:
                 raise ApiError("not_found", "no such delivery")

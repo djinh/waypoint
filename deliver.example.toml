@@ -5,7 +5,7 @@
 url = "http://127.0.0.1:7130"
 # This deliverer's token (from `waypointd client add host-1 deliverer --token-file ...`).
 # Keep the file readable by this user only.
-token_file = "/etc/waypoint/host-1.token"
+token_file = "~/.config/waypoint/tokens/host-1.token"
 # Put in front of every message typed into a pane.
 prefix = "[waypoint] "
 # What a tmux recipient gets typed: "ref" (recommended for agent sessions) or "full" (the default).

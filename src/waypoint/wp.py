@@ -28,7 +28,7 @@ import os
 import sys
 
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
-from .present import (InputError, answer_line, client_name, item_id, line, local, to_condition,
+from .present import (InputError, answer_line, client_name, flat, item_id, line, local, to_condition,
                       to_ts, to_when)
 from .schema import limits
 from .server import issue_token
@@ -213,7 +213,10 @@ def run(args, out) -> int:
         print(json.dumps(got) if args.json else f"{got['status']} {got['version']}", file=out)
         return 0
     client = make_client(args)
-    api = client.request
+
+    def api(*a, **kw):
+        got = client.request(*a, **kw)
+        return got if args.json else flat(got)  # text output: other clients' text stays on its line
 
     def show(got, text):
         print(json.dumps(got, indent=2, ensure_ascii=False) if args.json else text, file=out)

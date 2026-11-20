@@ -1,4 +1,4 @@
-"""running is a lease (#46): running_until, a running_check when it passes, a lapse back to next an
+"""running is a lease: running_until, a running_check when it passes, a lapse back to next an
 hour after the check was confirmed without an update by the owner."""
 
 from __future__ import annotations

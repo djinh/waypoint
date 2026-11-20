@@ -1,4 +1,4 @@
-"""The agent that asked a person a question may close it, quoting the answer (#48)."""
+"""The agent that asked a person a question may close it, quoting the answer."""
 
 from __future__ import annotations
 

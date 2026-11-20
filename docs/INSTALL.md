@@ -11,10 +11,9 @@ You need Python 3.11 or later, and `tmux` on hosts whose sessions are woken by t
 **The order on a new host:**
 
 1. the `waypoint` system user and the install (section 1);
-2. the state directory (`/var/lib/waypoint`, created by the unit) and the config: listen
-   addresses and port (section 1);
+2. the config (listen addresses, port, coordinator) and the state directory (section 1);
 3. the first human and the coordinator, registered locally (section 2);
-4. the unit, started (section 1); then every other client over the API (section 2);
+4. the unit, started (section 2), then every other client over the API (section 2);
 5. a deliverer user unit for each Unix user whose recipients get messages (section 3);
 6. the MCP server, configured once per Unix user that runs agent sessions (section 4);
 7. then start the sessions, each with its client name in its environment.
@@ -41,7 +40,8 @@ sudo python3 -m venv /opt/waypoint
 sudo /opt/waypoint/bin/pip install /path/to/waypoint      # a checkout or a built wheel
 ```
 
-Write `/etc/waypoint/waypoint.toml` (every key is in `config.example.toml`):
+Write `/etc/waypoint/waypoint.toml` (every key is in `config.example.toml`), in a directory you
+create first (`sudo install -d -m 0755 /etc/waypoint`):
 
 ```toml
 [server]
@@ -57,21 +57,21 @@ coordinator = "coordinator"   # who hears about escalations and outages (registe
 ```
 
 Waypoint refuses `0.0.0.0` and `::`: name each address it should listen on. Every request but
-`/v1/health` needs a token, so other accounts on the machine can't read it without one, but only
-listen on networks you trust. Don't put it behind a public web server.
+`/v1/health` needs a token, so other accounts on the machine can't read it without one.
 
-Install the unit and start it:
+**Network exposure.** Waypoint speaks plain HTTP; tokens and item text travel unencrypted. On one
+machine, loopback is enough. To reach it from other machines, listen on an address of an encrypted
+network only (a WireGuard or other VPN interface), or keep it on loopback and reach it through an
+SSH tunnel, or put a TLS-terminating reverse proxy on the same machine in front of `127.0.0.1`.
+Never expose it to the internet, and never send its traffic across a network you don't trust.
+
+Create the state directory (the unit would create it at its first start, but the first clients are
+registered before that, in section 2) and check the configuration:
 
 ```sh
-sudo cp systemd/waypoint.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now waypoint
-curl http://127.0.0.1:7130/v1/health      # {"status":"ok","version":"…"}
+sudo install -d -o waypoint -g waypoint -m 0700 /var/lib/waypoint
+sudo -u waypoint /opt/waypoint/bin/waypointd --config /etc/waypoint/waypoint.toml check --config-only
 ```
-
-The unit runs as `waypoint`, can write only `/var/lib/waypoint`, sees no home folders and runs
-nothing else. Schema changes are applied at start; upgrading is installing the new version and
-restarting.
 
 ## 2. The first clients
 
@@ -99,9 +99,20 @@ sudo install -o alice -g alice -m 0600 /var/lib/waypoint/new-tokens/alice.token 
 sudo shred -u /var/lib/waypoint/new-tokens/alice.token
 ```
 
-(The same for the coordinator's token and its Unix user.) If `site.coordinator` names the
-coordinator, register it before the service's next start: `waypointd serve` refuses to start with
-a coordinator that isn't registered.
+(The same for the coordinator's token and its Unix user.) Now the service can start: it refuses to
+start while `site.coordinator` names a client that isn't registered, which `check` tells you first.
+
+```sh
+sudo -u waypoint /opt/waypoint/bin/waypointd --config /etc/waypoint/waypoint.toml check
+sudo cp systemd/waypoint.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now waypoint
+curl http://127.0.0.1:7130/v1/health      # {"status":"ok","version":"…"}
+```
+
+The unit runs as `waypoint`, can write only `/var/lib/waypoint`, sees no home folders and runs
+nothing else. Schema changes are applied at start; upgrading is installing the new version and
+restarting (see "Upgrading and rolling back").
 
 From then on the human does the rest over the API with `wp`, which also writes each new token to a
 new 0600 file and never prints it. A coordinator can register agents, deliverers and readers too.
@@ -114,7 +125,8 @@ wp client add pages --role reader --token-file pages.token          # e.g. a das
 wp client route alice host-1      # alice's messages go out through host-1 (e.g. as push)
 ```
 
-Move each token file to its client's Unix user as above. `wp client rotate NAME --token-file F`
+Move each token file to its client's Unix user as above, to `~/.config/waypoint/tokens/<name>.token`
+(the deliverer's too: `host-1.token` goes to the user it runs as, section 3). `wp client rotate NAME --token-file F`
 replaces a token (the old one stops at once); `wp client retire NAME` retires a client once its
 open items are handed over or closed.
 
@@ -141,11 +153,15 @@ One deliverer runs for each host and user whose recipients get messages. It need
 config naming, per recipient, how to reach it (see `deliver.example.toml`): a tmux pane for an agent
 session, a push URL for a human, or a webhook.
 
+Its token file (`host-1.token` from section 2) goes to `~/.config/waypoint/tokens/host-1.token` of
+the user it runs as, mode 0600; `token_file` in the config points there.
+
 ```sh
 # as the user whose sessions run in tmux
 pip install --user /path/to/waypoint        # or a virtual environment of their own
 mkdir -p ~/.config/waypoint ~/.config/systemd/user
 cp deliver.example.toml ~/.config/waypoint/deliver.toml     # then edit it
+waypoint-deliver --config ~/.config/waypoint/deliver.toml --check
 cp systemd/waypoint-deliver.service ~/.config/systemd/user/
 systemctl --user enable --now waypoint-deliver
 sudo loginctl enable-linger $USER           # keep it running without a login
@@ -238,11 +254,21 @@ escalations and outages.
 ## Upgrading and rolling back
 
 Each version brings its schema changes as numbered migrations. `waypointd serve` applies the ones
-the database hasn't had yet when it starts, each in its own transaction, so a failed migration leaves
+the database hasn't had yet when it starts, all in one transaction, so a failed migration leaves
 the database as it was and the service doesn't start. A database with a newer schema than the
 installed code is refused rather than misread. The other `waypointd` commands (`backup`, `client …`)
 never migrate: they run beside a live daemon, so they refuse a database whose schema differs from
 their own version; start the upgraded daemon first.
+
+Before upgrading, check your configurations against the new version without touching the
+installation: install it into a scratch environment and run its checks (the daemon's check opens the
+database read-only and never migrates it; run each deliverer's check as that deliverer's user):
+
+```sh
+python3 -m venv /tmp/waypoint-new && /tmp/waypoint-new/bin/pip install /path/to/new/waypoint
+sudo -u waypoint /tmp/waypoint-new/bin/waypointd --config /etc/waypoint/waypoint.toml check
+/tmp/waypoint-new/bin/waypoint-deliver --config ~/.config/waypoint/deliver.toml --check
+```
 
 To upgrade (pip installs only a version it doesn't have yet: every release that changes the code
 has a new version number, see `waypointd --version`; if you ever install a modified checkout with

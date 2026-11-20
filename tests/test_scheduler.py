@@ -90,7 +90,7 @@ def test_a_new_wake_time_reminds_again(store, sched, mk, who):
 
 def test_done_wakes_exactly_the_sessions_it_unblocks(store, sched, mk, who):
     soak = mk("agent-a", "Staging soak", label="gate soak")
-    rel = mk("agent-b", "Production release", label="production release", waits_on=[{"item": soak["id"]}])
+    mk("agent-b", "Production release", label="production release", waits_on=[{"item": soak["id"]}])
     other = mk("agent-c", "Unrelated")
     store.patch_item(who("agent-a"), soak["id"], {"state": "done"})
     (m,) = messages(store)
@@ -101,7 +101,7 @@ def test_done_wakes_exactly_the_sessions_it_unblocks(store, sched, mk, who):
 
 def test_answer_to_a_decision_wakes_the_asker(store, sched, mk, who):
     q = mk("alice", "Choose the strategy", caller="agent-b", kind="decision", question={"text": "Which?"})
-    tool = mk("agent-b", "Migration tool", track="infra", waits_on=[{"item": q["id"]}])
+    mk("agent-b", "Migration tool", track="infra", waits_on=[{"item": q["id"]}])
     store.patch_item(who("alice"), q["id"], {"state": "done", "note": "online"})
     assert kinds(store) == [("unblocked", "agent-b", 2)]
 
@@ -232,7 +232,7 @@ def test_steps_run_once_across_restarts(store, mk, tokens, tracks):
 
 
 def test_created_past_due_starts_with_a_nudge(store, sched, mk):
-    """The ladder clock starts when the due time was set, if that is later (design owner, #12)."""
+    """The ladder clock starts when the due time was set, if that is later."""
     it = mk("agent-a", "Should have been done", due_at="2026-03-10T06:00:00Z")
     mk("agent-c", "Waits", waits_on=[{"item": it["id"]}])
     assert store.get_item(it["id"])["late"]  # late at once: derived from due_at alone
@@ -453,7 +453,7 @@ def test_a_wake_missed_in_an_outage_survives_a_coordinators_note(store, sched, m
 
 
 def test_no_notice_to_the_owner_about_its_own_change(store, sched, mk, who):
-    """The client whose write caused an unblock or a re-plan knows already (#41)."""
+    """The client whose write caused an unblock or a re-plan knows already."""
     a = mk("agent-a", "A")
     mine = mk("agent-a", "Mine")
     store.patch_item(who("agent-a"), mine["id"], {"add_waits_on": [{"item": a["id"]}]})  # next → waiting

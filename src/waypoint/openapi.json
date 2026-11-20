@@ -2,7 +2,7 @@
  "openapi": "3.1.0",
  "info": {
   "title": "Waypoint API",
-  "version": "0.1.0",
+  "version": "0.1.14",
   "summary": "Open items, dependencies and wake-ups for a group of agent sessions.",
   "description": "The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client\nof it. The prose that goes with this file is `docs/API.md`; where the two differ, this file is\nthe contract and the prose is a bug.\n\nConventions:\n- JSON in and out, UTF-8. Times are RFC 3339. Waypoint answers in UTC with a `Z` suffix; input\n  must carry a zone (`Z` or an offset) and is converted to UTC. A day (`when` with precision\n  `day`) is a plain date, `YYYY-MM-DD`, in the deployment's time zone.\n- Every request but `GET /v1/health` carries `Authorization: Bearer <token>`.\n- Unknown fields in a request body are refused (`invalid`), never stored.\n- Absent fields in a response are never used for \"unknown\": a field without a value is `null`\n  or an empty list.\n",
   "license": {
@@ -803,7 +803,7 @@
      "clients"
     ],
     "summary": "Change a client's label or deliverer, or retire it.",
-    "description": "Retiring is refused (`invalid`, field `retired`) while the client owns open items: hand\nthem to another owner or close them first. A retired client's token stops working.\n",
+    "description": "Retiring is refused (`invalid`, field `retired`) while the client owns open items (hand\nthem to another owner or close them first), and for the coordinator (the configured one,\nor the last coordinator when none is configured). A retired client's token stops working\nand its deliverer registration ends: its waiting messages go to the coordinator if a\ndeliverer reaches it, and are withdrawn otherwise.\n",
     "requestBody": {
      "required": true,
      "content": {
@@ -2616,7 +2616,8 @@
      },
      "detail": {
       "type": "string",
-      "maxLength": 200
+      "maxLength": 200,
+      "description": "Why it gave up. Quoted to the coordinator, so it passes the content check (`422 content`)."
      }
     }
    },

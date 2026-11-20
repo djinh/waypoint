@@ -325,7 +325,7 @@ class PushAdapter:
     def deliver(self, delivery: dict):
         headers = {"Title": one_line(self.title, 100), "Content-Type": "text/plain; charset=utf-8"}
         if self.priority:
-            headers["Priority"] = self.priority
+            headers["Priority"] = one_line(self.priority, 20)
         return _post(self.url, one_line(delivery["summary"], 140).encode("utf-8"), headers, self.timeout)
 
 

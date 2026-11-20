@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -22,6 +23,8 @@ from . import content, schema
 from .clock import Clock
 from .errors import ApiError
 from .timeutil import fmt, norm_ts, parse_day, parse_delay, parse_ts
+
+log = logging.getLogger("waypoint.store")
 
 OPEN = ("next", "running", "waiting")
 CLOSED = ("done", "dropped")
@@ -97,10 +100,15 @@ def item_id(num: int) -> str:
     return f"W-{num}"
 
 
+_ITEM_ID = re.compile(r"W-([1-9][0-9]{0,17})")
+
+
 def item_num(iid: str) -> int:
-    if not isinstance(iid, str) or not iid.startswith("W-") or not iid[2:].isdigit():
+    """The number of an item id as the contract writes it (W-1, never W-01 or other digits)."""
+    m = _ITEM_ID.fullmatch(iid) if isinstance(iid, str) else None
+    if m is None:
         raise ApiError("not_found", "no such item")
-    return int(iid[2:])
+    return int(m.group(1))
 
 
 class Store:
@@ -236,8 +244,8 @@ class Store:
         return [self.client_record(n) for n in names]
 
     def _admin(self, caller: Client, target_role: str | None = None) -> None:
-        """Coordinators and humans manage clients; human and coordinator clients only a human
-        (design owner, 2026-11-14): no create, rotate, retire, re-route or label change by a coordinator."""
+        """Coordinators and humans manage clients; human and coordinator clients only a human:
+        no create, rotate, retire, re-route or label change by a coordinator."""
         if caller.role not in self.ADMINS:
             raise ApiError("forbidden", "only coordinators and humans manage clients")
         if target_role in ("human", "coordinator") and caller.role != "human":
@@ -287,13 +295,34 @@ class Store:
                              (name,)).fetchone():
                     raise ApiError("invalid", "retired: recipients are still registered with this deliverer",
                                    field="retired")
+                if self._is_the_coordinator(c, name, rec["role"]):
+                    raise ApiError("invalid", "retired: this client is the coordinator; configure or register "
+                                              "another one first", field="retired")
                 self._reroute_to_coordinator(c, name)
                 self.retire_client(name)
             return self.client_record(name)
 
+    def _is_the_coordinator(self, c, name: str, role: str) -> bool:
+        """Whether retiring NAME would leave Waypoint without its coordinator: the configured one, or
+        the last live coordinator when none is configured."""
+        if self.settings.coordinator:
+            return name == self.settings.coordinator
+        return role == "coordinator" and not c.execute(
+            "SELECT 1 FROM clients WHERE role = 'coordinator' AND retired_at IS NULL AND name != ?",
+            (name,)).fetchone()
+
     def retire_client(self, name: str) -> None:
+        """Retire NAME: no token, no deliverer, and nothing left waiting for it (messages that could
+        not go to the coordinator are withdrawn)."""
         with self.tx() as c:
-            c.execute("UPDATE clients SET retired_at = ?, token_hash = NULL WHERE name = ?", (fmt(self.now()), name))
+            now = fmt(self.now())
+            c.execute("UPDATE clients SET retired_at = ?, token_hash = NULL, deliverer = NULL WHERE name = ?",
+                      (now, name))
+            cur = c.execute("UPDATE messages SET withdrawn_at = ?, lease_until = NULL "
+                            "WHERE recipient = ? AND acked_at IS NULL AND withdrawn_at IS NULL", (now, name))
+            if cur.rowcount:
+                log.warning("%d message(s) for retired client %s withdrawn: no coordinator to take them",
+                            cur.rowcount, name)
 
     def authenticate(self, token: str | None) -> Client | None:
         if not token:
@@ -434,7 +463,8 @@ class Store:
             return None
         if row["answer_at"]:
             return {**json.loads(row["answer_at"]), "default": False}
-        creator = c.execute("SELECT role FROM clients WHERE name = ?", (row["created_by"],)).fetchone()
+        creator = c.execute("SELECT role FROM clients WHERE name = ? AND retired_at IS NULL",
+                            (row["created_by"],)).fetchone()
         if creator is not None and creator["role"] in ("agent", "coordinator"):
             return {"session": row["created_by"], "default": True}
         return None
@@ -451,9 +481,12 @@ class Store:
                 ]
         return item
 
-    def items(self, where: str = "1", args: tuple = ()) -> list[dict]:
+    def items(self, where: str = "1", args: tuple = (), limit: int | None = None) -> list[dict]:
+        sql = f"SELECT * FROM items WHERE {where} ORDER BY created_at, num"
+        if limit is not None:
+            sql, args = sql + " LIMIT ?", (*args, limit)
         with self.read() as c:
-            rows = c.execute(f"SELECT * FROM items WHERE {where} ORDER BY created_at, num", args).fetchall()
+            rows = c.execute(sql, args).fetchall()
             return [self._serialize(c, r) for r in rows]
 
     def list_items(self, owner=None, track=None, states=OPEN, waiting_on=None, waits_on_human=None,
@@ -471,8 +504,10 @@ class Store:
             clauses.append("late = ?"); args.append(int(late))
         if at_risk is not None:
             clauses.append("at_risk_from " + ("!=" if at_risk else "=") + " '[]'")
-        items = self.items(" AND ".join(clauses) or "1", tuple(args))
-        if waiting_on or waits_on_human is not None:
+        filtered = bool(waiting_on) or waits_on_human is not None
+        # without a filter applied here, the database stops after one more than the limit
+        items = self.items(" AND ".join(clauses) or "1", tuple(args), limit=None if filtered else limit + 1)
+        if filtered:
             humans: set[str] = set()
             if waits_on_human is not None:
                 with self.read() as c:
@@ -625,7 +660,7 @@ class Store:
         owned by a human or a coordinator (questions keep their own rule, _asker_closes), and not
         after the owner closed or dropped it: theirs stands. Every such change is in the history
         under the creator's name, like any other. The creator may close it or set it back to
-        next/waiting, but never `running`: only the owner knows it is working on it (#57)."""
+        next/waiting, but never `running`: only the owner knows it is working on it."""
         if row["created_by"] != caller.name or row["state"] not in OPEN or row["kind"] not in ("task", "event"):
             return False
         if body.get("state") == "running" or "running_until" in body:
@@ -634,7 +669,7 @@ class Store:
         return owner is not None and owner["role"] == "agent"
 
     def _asker_closes(self, c, caller: Client, row, body: dict) -> bool:
-        """The agent that asked a person a question may close it once answered (design owner, #48):
+        """The agent that asked a person a question may close it once answered:
         only while it is open, only `state: done`, with a note that quotes the answer ("…") and says
         where it was given (a session or an issue). Any other change of someone else's item, and any
         change after the person closed or dropped it, stays refused."""
@@ -744,7 +779,11 @@ class Store:
         if kind not in ANSWERED:
             raise ApiError("invalid", "answer_at: only decisions and approvals are answered", field="answer_at")
         if "issue" in value:
-            if content.check_fields({"links.0.url": value["issue"]}):
+            try:
+                bad = content.link_problem(value["issue"])
+            except ValueError:
+                raise ApiError("invalid", "answer_at.issue: not a valid URL", field="answer_at.issue") from None
+            if bad:
                 raise ApiError("content", "answer_at.issue: looks like it holds data that must not be stored",
                                field="answer_at.issue")
             return json.dumps({"issue": value["issue"]})

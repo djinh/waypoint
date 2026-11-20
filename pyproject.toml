@@ -7,7 +7,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 # starlette and uvicorn serve the HTTP API; mcp is the official MCP SDK for the MCP server
 # (it depends on starlette, uvicorn and jsonschema too).
-dependencies = ["starlette>=0.40", "uvicorn>=0.30", "jsonschema>=4.18", "mcp>=2.3,<3"]
+# Each below its next major version, so a release that may break us is never installed silently.
+dependencies = ["starlette>=0.40,<2", "uvicorn>=0.30,<1", "jsonschema>=4.18,<5", "mcp>=2.3,<3"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pyyaml"]
@@ -30,3 +31,10 @@ packages = ["src/waypoint"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Errors only: syntax errors and pyflakes (unused names, undefined names, f-strings without fields).
+select = ["E9", "F"]

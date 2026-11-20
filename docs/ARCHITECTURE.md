@@ -33,8 +33,8 @@ in [API.md](API.md) and [api/openapi.yaml](api/openapi.yaml).
 ## Data
 
 One SQLite file in write-ahead mode, foreign keys on. `PRAGMA user_version` holds the schema
-version; `db.MIGRATIONS` is the ordered list of migrations, each run once in its own transaction.
-An applied migration is never edited.
+version; `db.MIGRATIONS` is the ordered list of migrations, each run once; all pending ones run in
+one transaction, so a failure leaves the database as it was. An applied migration is never edited.
 
 - `items`: one row per item. Ids are `W-<num>` over an `AUTOINCREMENT` key, so they are never
   reused. Derived values (`state` for next/waiting, `late`, `at_risk_from`) are stored, so reads
@@ -50,7 +50,14 @@ An applied migration is never edited.
 - `passes`: the time of every scheduler pass of the last week.
 
 Confirmed or withdrawn messages are deleted after 30 days (each left a line in its item's history);
-unconfirmed ones are kept however old.
+unconfirmed ones are kept however old, and so are items, their history, wake-ups and ladder steps:
+the file grows with use (about a few kilobytes per item with its history), which SQLite handles
+well into hundreds of thousands of items.
+
+The database runs with `synchronous = NORMAL`: a crash of Waypoint loses nothing that was
+committed, and the file stays consistent after a power loss or an OS crash, but the last
+transactions before such a loss may be missing. A message is written in the same transaction as
+its cause, so either both are kept or neither is.
 
 ## Writes and derivation
 

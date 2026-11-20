@@ -1,6 +1,7 @@
 # Contributing
 
-Issues and pull requests are welcome: bug reports, questions, ideas and fixes.
+Issues and pull requests are welcome: bug reports, questions, ideas and fixes. A security problem
+goes privately, not in an issue: see [SECURITY.md](SECURITY.md).
 
 ## How this repository works
 
@@ -22,7 +23,8 @@ under the project's [MIT licence](LICENSE).
 - Run the tests: `uv run --with-editable . --with pytest --with pyyaml python -m pytest -q` (or
   `pip install -e '.[dev]'` and `python -m pytest -q`). Tests use `127.0.0.1` on a free port and
   temporary folders, never a real deployment.
-- A change to `src/` bumps `__version__` in `src/waypoint/__init__.py`.
+- A change to `src/` bumps `__version__` in `src/waypoint/__init__.py`; then run
+  `python scripts/sync_openapi.py`, which copies it into the API contract.
 - A change to the API's shape updates `docs/api/openapi.yaml`, `docs/API.md`,
   `src/waypoint/openapi.json` (`python scripts/sync_openapi.py`) and the examples
   (`python examples/make_examples.py`) together.

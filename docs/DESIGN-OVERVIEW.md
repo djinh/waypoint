@@ -23,8 +23,9 @@ waiting for them.
 - **Not an issue tracker.** Issues, pull requests and documents stay where they are; an item links
   to them.
 - **Not a notes store.** An item has a one-line status. The story of the work lives elsewhere.
-- **Not a job runner.** Waypoint never runs a command, on its own machine or anywhere else. It
-  records, reminds and escalates; acting is up to the agents and people.
+- **Not a job runner.** Waypoint never runs a command, on its own machine or anywhere else; the
+  only program a deliverer starts is `tmux`, to type a line. It records, reminds and escalates;
+  acting is up to the agents and people.
 
 ## The pieces
 

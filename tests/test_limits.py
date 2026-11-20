@@ -1,4 +1,4 @@
-"""The length limits are stated where people and agents meet them (#40): in refusals, in the MCP
+"""The length limits are stated where people and agents meet them: in refusals, in the MCP
 tools' parameter descriptions and in `wp --help`, all taken from the contract."""
 
 from __future__ import annotations

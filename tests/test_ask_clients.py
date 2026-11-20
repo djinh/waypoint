@@ -125,8 +125,7 @@ def test_client_input_checks(server, tokens):
     assert status == 200 and out["deliverer"] == "host-1"
 
 
-# A coordinator manages agents, deliverers and readers; human and coordinator clients only a human
-# (design owner, 2026-11-14).
+# A coordinator manages agents, deliverers and readers; human and coordinator clients only a human.
 COORD_REFUSED = [
     ("POST", "/v1/clients", {"name": "bob2", "role": "human"}),
     ("POST", "/v1/clients", {"name": "coord2", "role": "coordinator"}),

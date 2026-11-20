@@ -5,6 +5,7 @@
     waypointd [--config FILE] client rotate NAME --token-file FILE
     waypointd [--config FILE] client route NAME DELIVERER|-
     waypointd [--config FILE] backup DIR
+    waypointd [--config FILE] check [--config-only]
 
 Tokens are written only to the named file, created with mode 0600; they are never printed.
 """
@@ -15,11 +16,12 @@ import argparse
 import logging
 import os
 import socket
+import sqlite3
 import sys
 
 from . import __version__
-from .config import ConfigError, load
-from .db import SchemaMismatch, connect
+from .config import ConfigError, check_clients, load
+from .db import MIGRATIONS, SchemaMismatch, connect
 from .errors import ApiError
 from .store import ALL_ROLES, Store
 
@@ -50,14 +52,45 @@ def bind_sockets(addresses: list[str], port: int) -> list[socket.socket]:
     return socks
 
 
+def live_clients(conn: sqlite3.Connection) -> dict[str, str]:
+    """Each unretired client's role, by name (the clients table is the same in every schema)."""
+    return {r[0]: r[1] for r in conn.execute("SELECT name, role FROM clients WHERE retired_at IS NULL")}
+
+
 def check_coordinator(store: Store) -> None:
-    """A configured coordinator must be a registered coordinator, or escalations go nowhere."""
-    name = store.settings.coordinator
-    if name is None:
-        return
-    cl = store.client(name)
-    if cl is None or cl.role != "coordinator":
-        raise ConfigError(f"site.coordinator: {name!r} is not a registered coordinator")
+    """The clients the configuration names must exist with the right role, or escalations and
+    notifications go nowhere."""
+    with store.read() as c:
+        check_clients(store.settings, live_clients(c))
+
+
+def dry_check(cfg, config_only: bool) -> int:
+    """`waypointd check`: the configuration loads (done by the caller) and, unless CONFIG_ONLY, the
+    clients it names exist in the database, which is opened read-only and never migrated."""
+    if config_only:
+        print("waypointd: configuration OK (clients not checked)")
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{cfg.database}?mode=ro", uri=True)
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            clients = live_clients(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f"waypointd: check: cannot read the database: {e}", file=sys.stderr)
+        return 1
+    try:
+        check_clients(cfg.settings, clients)
+    except ConfigError as e:
+        print(f"waypointd: configuration: {e}", file=sys.stderr)
+        return 2
+    note = "" if version == len(MIGRATIONS) else (
+        f"; the database has schema {version}, this version migrates it to {len(MIGRATIONS)} at start"
+        if version < len(MIGRATIONS) else f"; the database has schema {version}, newer than this version's "
+                                          f"{len(MIGRATIONS)}: it would refuse to start")
+    print(f"waypointd: configuration OK, {len(clients)} live clients{note}")
+    return 0 if version <= len(MIGRATIONS) else 1
 
 
 def serve(cfg) -> None:
@@ -83,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("serve", help="run the daemon (the default)")
     bk = sub.add_parser("backup", help="write a consistent copy of the database and a JSON export to DIR")
     bk.add_argument("dir")
+    ck = sub.add_parser("check", help="check the configuration (and the clients it names) without changing anything")
+    ck.add_argument("--config-only", action="store_true", help="don't open the database")
     cl = sub.add_parser("client", help="register clients locally").add_subparsers(dest="action", required=True)
     add = cl.add_parser("add")
     add.add_argument("name")
@@ -111,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"waypointd: configuration: {e}", file=sys.stderr)
             return 2
         return 0
+    if args.cmd == "check":
+        return dry_check(cfg, args.config_only)
     try:
         store = Store(connect(cfg.database, migrate_schema=False), settings=cfg.settings)
     except SchemaMismatch as e:

@@ -24,7 +24,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
-from .present import InputError, answer_line, item_id, line, local, to_answer_at, to_condition, to_ts, to_when
+from .present import InputError, answer_line, flat, item_id, line, local, to_answer_at, to_condition, to_ts, to_when
 from .schema import limits
 
 INSTRUCTIONS = ("Waypoint keeps your open items, what waits on what, and wakes you at the right time. "
@@ -59,7 +59,7 @@ def build(client: WaypointClient, me: str) -> MCPServer:
 
     def api(method: str, path: str, body=None, query=None):
         try:
-            return client.request(method, path, body, query)
+            return flat(client.request(method, path, body, query))
         except Unavailable:
             raise ToolError("Waypoint unavailable") from None
         except ApiFailure as e:

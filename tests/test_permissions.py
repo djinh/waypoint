@@ -110,7 +110,7 @@ def test_track_writers(store, who, tracks):
 
 
 def test_creator_may_not_set_the_owners_item_running(store, mk, who):
-    """Only the owner knows it is working on it (#57); closing and next/waiting stay allowed."""
+    """Only the owner knows it is working on it; closing and next/waiting stay allowed."""
     it = mk("agent-b", "Filed for agent-b", caller="agent-a")
     refused(store.patch_item, who("agent-a"), it["id"], {"state": "running"})
     refused(store.patch_item, who("agent-a"), it["id"], {"running_until": "2030-01-01T00:00:00Z"})

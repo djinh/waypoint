@@ -2,7 +2,7 @@
 
 Every setting a Waypoint deployment makes, where it is set, its default and what it does. Waypoint
 ships with safe defaults: it listens on `127.0.0.1` only, every request but the health check needs
-a token, and it never runs a command. Your own values (addresses, names, paths, push URLs) belong in
+a token, and the daemon never runs a command (a deliverer only calls `tmux` to type a line). Your own values (addresses, names, paths, push URLs) belong in
 your configuration files, never in this repository.
 
 | Where | What | Read by |
@@ -17,8 +17,11 @@ your configuration files, never in this repository.
 ## 1. The daemon: `waypoint.toml`
 
 Passed as `waypointd --config FILE …`. Every key is optional; the file may be empty or absent (then
-all defaults apply). Unknown sections are refused. The commented example is
-[`config.example.toml`](../config.example.toml).
+all defaults apply). Unknown sections and keys, and values of the wrong type, are refused with the
+key's name, so a typo can't fall back to a default unnoticed. The commented example is
+[`config.example.toml`](../config.example.toml). `waypointd --config FILE check` checks a file
+without starting anything: the keys, and that the coordinator and the ladder's `notify` targets are
+registered clients (the database is opened read-only and never migrated; `--config-only` skips it).
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -26,9 +29,9 @@ all defaults apply). Unknown sections are refused. The commented example is
 | `server.port` | `7130` | The TCP port, the same on every address. |
 | `store.database` | `/var/lib/waypoint/waypoint.db` | The SQLite file. Created and migrated at start; the directory must exist and be writable by the daemon's user. |
 | `site.tz` | `UTC` | IANA time zone for times shown to people and for day-precision dates (`when` with precision `day`). Stored times are always UTC. |
-| `site.done_days` | `3` | How many days done and dropped items stay in the views. |
+| `site.done_days` | `3` | How many days done and dropped items stay in the views (0 or more). |
 | `site.coordinator` | first client with role `coordinator` | The client told about escalations, undeliverable messages, silent deliverers and outages. If set, it must be a registered coordinator, or `waypointd serve` refuses to start. |
-| `site.default_ladder` | nudge at `0m`, escalate and flag at `1h` | The overdue ladder for items without their own: a list of `{after, action[, to]}`, `after` a delay like `0m`, `90m`, `2h`, `1d`; `action` one of `nudge`, `escalate`, `notify` (needs `to`, a human client), `flag`. |
+| `site.default_ladder` | nudge at `0m`, escalate and flag at `1h` | The overdue ladder for items without their own: a list of `{after, action[, to]}`, `after` a delay like `0m`, `90m`, `2h`, `1d`; `action` one of `nudge`, `escalate`, `notify` (needs `to`, a registered human, checked at start), `flag`; only `notify` takes `to`. |
 | `site.running_lease` | `2h` | How long `running` lasts unless the owner renews it with an update. |
 | `site.running_grace` | `1h` | How long after the "still running?" check was delivered the item goes back to `next` without an update. |
 
@@ -39,7 +42,9 @@ a gap of more than 60 s between passes is an outage; delivery lease 120 s; a del
 ## 2. A deliverer: `deliver.toml`
 
 Passed as `waypoint-deliver --config FILE`. One file per deliverer, kept by the Unix user it runs
-as. The commented example is [`deliver.example.toml`](../deliver.example.toml).
+as. The commented example is [`deliver.example.toml`](../deliver.example.toml). Unknown sections
+and keys are refused, as in the daemon's file; `waypoint-deliver --config FILE --check` checks the
+file and the token file, then exits.
 
 ### `[waypoint]`
 
@@ -63,8 +68,8 @@ name is the recipient's client name.
 | `prefix` | tmux | `[waypoint].prefix` | Per-recipient prefix. |
 | `message` | tmux | `[waypoint].message` | `"full"` or `"ref"` for this recipient. Refused on other adapters. |
 | `url` | push, webhook | required | `http(s)` URL. Push: a topic URL that accepts a plain-text POST (e.g. an ntfy-style service); webhook: any endpoint that accepts JSON. |
-| `title` | push | `"Waypoint"` | The push notification's title header. |
-| `priority` | push | none | The push service's `Priority` header, if it has one. |
+| `title` | push | `"Waypoint"` | The push notification's title header: Latin-1 text, since HTTP headers carry nothing else. |
+| `priority` | push | none | The push service's `Priority` header, if it has one (Latin-1 text). |
 
 ### 2.1 `message = "ref"`
 

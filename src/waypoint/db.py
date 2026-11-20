@@ -1,6 +1,7 @@
 """SQLite: connection settings and numbered migrations.
 
-Migrations run at start, each in its own transaction, in order. An applied migration is never
+Migrations run at start, in order, all pending ones in one transaction (a failure leaves the
+database as it was). An applied migration is never
 edited; a schema change is a new entry at the end of MIGRATIONS.
 """
 
@@ -147,6 +148,14 @@ MIGRATIONS: list[str] = [
     ALTER TABLE items ADD COLUMN running_until TEXT;
     ALTER TABLE items ADD COLUMN running_check INTEGER;
     ALTER TABLE items ADD COLUMN running_lapse_at TEXT
+    """,
+    # 6: retired clients have no deliverer, and nothing waits for them (versions before 0.1.11 kept
+    # both; the fetch now skips retired recipients, so such messages would stay stuck)
+    """
+    UPDATE messages SET withdrawn_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), lease_until = NULL
+        WHERE acked_at IS NULL AND withdrawn_at IS NULL
+        AND recipient IN (SELECT name FROM clients WHERE retired_at IS NOT NULL);
+    UPDATE clients SET deliverer = NULL WHERE retired_at IS NOT NULL
     """,
 ]
 

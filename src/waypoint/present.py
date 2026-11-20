@@ -16,6 +16,21 @@ _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+# Control characters and line and paragraph separators. Text other clients wrote (titles, notes,
+# questions, links) is shown with these as spaces, so it can never start a line of its own, e.g. one
+# that looks like a "[waypoint]" wake-up, in an agent's tool output or a terminal.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def flat(value):
+    """VALUE (an API answer) with every string on one line: control characters become spaces."""
+    if isinstance(value, str):
+        return _CONTROL.sub(" ", value)
+    if isinstance(value, list):
+        return [flat(v) for v in value]
+    if isinstance(value, dict):
+        return {k: flat(v) for k, v in value.items()}
+    return value
 
 
 def item_id(value: str) -> str:

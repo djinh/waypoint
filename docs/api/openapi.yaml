@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Waypoint API
-  version: 0.1.0
+  version: 0.1.14
   summary: Open items, dependencies and wake-ups for a group of agent sessions.
   description: |
     The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client
@@ -390,8 +390,11 @@ paths:
       tags: [clients]
       summary: Change a client's label or deliverer, or retire it.
       description: |
-        Retiring is refused (`invalid`, field `retired`) while the client owns open items: hand
-        them to another owner or close them first. A retired client's token stops working.
+        Retiring is refused (`invalid`, field `retired`) while the client owns open items (hand
+        them to another owner or close them first), and for the coordinator (the configured one,
+        or the last coordinator when none is configured). A retired client's token stops working
+        and its deliverer registration ends: its waiting messages go to the coordinator if a
+        deliverer reaches it, and are withdrawn otherwise.
       requestBody:
         required: true
         content:
@@ -1104,7 +1107,10 @@ components:
           type: string
           enum: [delivered, undeliverable]
           description: "`undeliverable`: the adapter gave up (for tmux, after 30 minutes); Waypoint escalates it."
-        detail: { type: string, maxLength: 200 }
+        detail:
+          type: string
+          maxLength: 200
+          description: Why it gave up. Quoted to the coordinator, so it passes the content check (`422 content`).
     Ack:
       type: object
       additionalProperties: false

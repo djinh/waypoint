@@ -1,4 +1,4 @@
-"""answer_at (#44): a decision or approval says where the person answers: an issue, or a session."""
+"""answer_at: a decision or approval says where the person answers: an issue, or a session."""
 
 from __future__ import annotations
 

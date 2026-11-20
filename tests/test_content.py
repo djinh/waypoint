@@ -141,7 +141,7 @@ def test_generated_tokens_are_refused():
     assert _rate(tokens_urlsafe, "title") >= 0.97
 
 
-# #54: package versions with four dotted parts, and only those (the reviewer's narrower rule).
+# Package versions with four dotted parts, and only those (the reviewer's narrower rule).
 @pytest.mark.parametrize("text", [
     "8:7.1.1.43+dfsg1-1",
     "7.1.1.43+dfsg1-1",

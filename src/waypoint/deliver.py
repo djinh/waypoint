@@ -163,12 +163,40 @@ class Deliverer:
 
 # ---------------------------------------------------------------------- configuration
 
+# Every key a section may hold, so a typo is refused instead of loading silently.
+WAYPOINT_KEYS = {"url", "token_file", "prefix", "message"}
+ADAPTER_KEYS = {
+    "tmux": {"adapter", "target", "socket", "prefix", "message"},
+    "push": {"adapter", "url", "title", "priority"},
+    "webhook": {"adapter", "url"},
+}
+
+
+def _header_text(name: str, key: str, value) -> None:
+    """Push titles and priorities travel as HTTP headers, which carry Latin-1 only."""
+    if not isinstance(value, str):
+        raise ConfigError(f"recipient {name}: {key} must be text")
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        raise ConfigError(f"recipient {name}: {key} must be Latin-1 text (it is sent as an HTTP header)") from None
+
+
 def build_adapters(recipients: dict, prefix: str, message: str = "full") -> dict:
     if message not in MESSAGE_MODES:
         raise ConfigError('waypoint.message must be "full" or "ref"')
     out = {}
     for name, rc in recipients.items():
+        if not isinstance(rc, dict):
+            raise ConfigError(f"recipient {name}: a [recipient.{name}] table")
         kind = rc.get("adapter")
+        extra = set(rc) - ADAPTER_KEYS.get(kind, set(rc))
+        if extra and not ("message" in extra and kind != "tmux"):
+            raise ConfigError(f"recipient {name}: unknown key {sorted(extra)[0]} for adapter {kind}")
+        if kind == "push":
+            for key in ("title", "priority"):
+                if key in rc:
+                    _header_text(name, key, rc[key])
         if "message" in rc and kind != "tmux":
             raise ConfigError(f"recipient {name}: message is a tmux option")
         if rc.get("message", message) not in MESSAGE_MODES:
@@ -192,7 +220,13 @@ def build_adapters(recipients: dict, prefix: str, message: str = "full") -> dict
 
 def load(path: str) -> tuple[WaypointClient, dict]:
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    unknown = set(data) - {"waypoint", "recipient"}
+    if unknown:
+        raise ConfigError(f"unknown section: {sorted(unknown)[0]}")
     wp = data.get("waypoint", {})
+    extra = set(wp) - WAYPOINT_KEYS
+    if extra:
+        raise ConfigError(f"unknown key: waypoint.{sorted(extra)[0]}")
     if "token_file" not in wp:
         raise ConfigError("waypoint.token_file is required")
     url = wp.get("url", "http://127.0.0.1:7130")
@@ -205,6 +239,7 @@ def load(path: str) -> tuple[WaypointClient, dict]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="waypoint-deliver", description="Deliver Waypoint's messages on this host")
     p.add_argument("--config", required=True)
+    p.add_argument("--check", action="store_true", help="check the configuration and the token file, then exit")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
@@ -212,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, OSError, ValueError, tomllib.TOMLDecodeError) as e:
         print(f"waypoint-deliver: configuration: {e}", file=sys.stderr)
         return 2
+    if args.check:
+        print(f"waypoint-deliver: configuration OK, {len(adapters)} recipient(s)")
+        return 0
     log.info("delivering for %d recipient(s)", len(adapters))
     Deliverer(client, adapters).run()
     return 0

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import sqlite3
 from functools import partial
 
@@ -73,11 +74,14 @@ def _bool(q: dict, key: str) -> bool | None:
     raise ApiError("invalid", f"{key}: true or false", field=key)
 
 
+_DIGITS = re.compile(r"[0-9]{1,9}")  # ASCII only: str.isdigit() also takes ² and other scripts
+
+
 def _int(q: dict, key: str, default: int, lo: int, hi: int) -> int:
     if key not in q:
         return default
     v = q[key]
-    if not v.isdigit() or not lo <= int(v) <= hi:
+    if not _DIGITS.fullmatch(v) or not lo <= int(v) <= hi:
         raise ApiError("invalid", f"{key}: a number from {lo} to {hi}", field=key)
     return int(v)
 

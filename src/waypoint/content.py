@@ -11,6 +11,8 @@ import ipaddress
 import re
 from urllib.parse import urlsplit, urlunsplit
 
+from .errors import ApiError
+
 _PATTERNS = [
     # long hex strings: hashes, keys, device ids
     re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32,}(?![0-9a-fA-F])"),
@@ -28,6 +30,10 @@ _PATTERNS = [
     re.compile(r"://[^/\s:@]+:[^/\s@]+@"),
     # e-mail addresses
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    # UUIDs (session, device and account ids) and MAC addresses
+    re.compile(r"(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+               r"(?![0-9A-Fa-f-])"),
+    re.compile(r"(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f:-])"),
 ]
 
 # Long runs of mixed letters and digits look like random tokens ("a8Fq3..."). "/", "-" and "."
@@ -117,18 +123,23 @@ def problem(text: str, slash_separates: bool = False) -> bool:
 
 # A git object id: SHA-1 (abbreviated from 7 characters, or full) or SHA-256.
 _COMMIT_ID = re.compile(r"^(?:[0-9a-fA-F]{7,40}|[0-9a-fA-F]{64})$")
+# A UUID as a whole path segment of a link names a page (a document, a ticket), as it does today.
+_UUID_SEGMENT = re.compile(r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
 _COMMIT_WORDS = {"commit", "commits", "blob", "tree"}
 
 
 def link_problem(url: str) -> bool:
-    """Like problem(), but a commit id is allowed in one place: the path segment right after
-    /commit/, /commits/, /blob/ or /tree/ in a link's URL. Any other hex in a URL (webhook and
-    capability URLs often carry their secret in the path) and the query string are checked as usual.
+    """Like problem(), with two allowances in a link's URL: a commit id as the path segment right
+    after /commit/, /commits/, /blob/ or /tree/, and a UUID as a whole path segment. Any other hex
+    in a URL (webhook and capability URLs often carry their secret in the path) and the query string
+    are checked as usual.
+    A URL that can't be parsed at all (e.g. an unclosed "[") raises ValueError.
     """
     parts = urlsplit(url)
     segs = parts.path.split("/")
     kept = [
-        "x" if i > 0 and segs[i - 1].lower() in _COMMIT_WORDS and _COMMIT_ID.match(seg) else seg
+        "x" if (i > 0 and segs[i - 1].lower() in _COMMIT_WORDS and _COMMIT_ID.match(seg))
+        or _UUID_SEGMENT.match(seg) else seg
         for i, seg in enumerate(segs)
     ]
     return problem(urlunsplit((parts.scheme, parts.netloc, "/".join(kept), parts.query, parts.fragment)),
@@ -140,7 +151,10 @@ def check_fields(fields: dict[str, str | None]) -> str | None:
     for name, text in fields.items():
         if not text:
             continue
-        bad = link_problem(text) if name.startswith("links.") and name.endswith(".url") else problem(text)
+        try:
+            bad = link_problem(text) if name.startswith("links.") and name.endswith(".url") else problem(text)
+        except ValueError:
+            raise ApiError("invalid", f"{name}: not a valid URL", field=name) from None
         if bad:
             return name
     return None

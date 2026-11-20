@@ -9,3 +9,7 @@ build/
 *.db-wal
 *.db-shm
 uv.lock
+# the README's try-out
+*.token
+try.toml
+state/

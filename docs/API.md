@@ -63,11 +63,13 @@ changed fields as `[old, new]`.
 **Content rules.** Many agents and pages read every field, so no field may hold secrets, tokens,
 signed URLs, network addresses, device ids or personal data. Waypoint refuses obvious ones (long hex
 strings, addresses and the like) with `422 content`, naming the field and never echoing the text.
+UUIDs and MAC addresses count as device and session ids.
 A four-part dotted number counts as a package version, not an address, only with a Debian epoch
 right before it (`8:7.1.1.43`) or a suffix right after it that starts with `+` or `~`
 (`7.1.1.43+dfsg1-1`); `installed 10.0.0.1-1` is still refused.
-One exception: a link's URL may carry a git commit id (7–40 or 64 hex characters) as the path
-segment right after `/commit/`, `/commits/`, `/blob/` or `/tree/`.
+Two exceptions in a link's URL: a git commit id (7–40 or 64 hex characters) as the path segment
+right after `/commit/`, `/commits/`, `/blob/` or `/tree/`, and a UUID as a whole path segment (a
+page's id); anywhere else in the URL, the query string included, they are refused as above.
 
 ### Conditions
 
@@ -89,8 +91,9 @@ human's list twice.
 
 **Where the answer goes (`answer_at`).** Every decision and approval says where the person answers.
 Set it on create, on ask or with a PATCH (`null` goes back to the default):
-`{"issue": "https://…/issues/31"}` (an `https` URL of an issue or pull request; `…/pull/`, `…/pulls/`
-and `…/merge_requests/` count too) or `{"session": "agent-b"}` (an agent's or coordinator's client
+`{"issue": "https://…/issues/31"}` (an `https` URL of an issue or pull request, without a `#…`
+fragment or `?…` query, so `…/issues/31#issuecomment-5` is given as `…/issues/31`; `…/pull/`,
+`…/pulls/` and `…/merge_requests/` count too) or `{"session": "agent-b"}` (an agent's or coordinator's client
 name). Waypoint reports it with `"default": false`. When none was set and the item was created by an
 agent or coordinator, it reports `{"session": <creator>, "default": true}`: the asking session. A
 new decision or approval whose `links` include an issue or pull request must say where the answer
@@ -126,7 +129,9 @@ forever:
 - Setting `running` sets `running_until`: the time given (`running_until` in the same create or
   PATCH, in the future) or now plus the deployment's lease (`site.running_lease`, default 2 h).
 - Every update of the item by its owner while it runs renews it: to the time given, or now plus
-  the lease. A coordinator's or a human's update leaves it alone unless it gives a time.
+  the lease. A coordinator's or a human's update leaves it alone unless it gives a time. A PATCH
+  that changes nothing (only `if_version`, or fields set to their current values) still counts as
+  an update: it renews the lease and raises `version`.
 - When `running_until` passes, the owner gets one `running_check` message ("W-12 was expected to
   finish running at 14:00. Still running? …") and `running_overdue` turns true, so a page can draw
   "running?".
@@ -330,8 +335,10 @@ deliverer wasn't fetching, gets `late` with reason `recipient_away` and " (deliv
 
 Body `{"result": "delivered"}` or `{"result": "undeliverable", "detail": "..."}`. `undeliverable`
 means the adapter gave up (the tmux adapter after 30 minutes without an empty input box); Waypoint
-then escalates it. Confirming is idempotent: the same message confirmed again returns the first
-confirmation. Another deliverer's message is `404 not_found`.
+then escalates it, quoting `detail`, so `detail` passes the content check like any other field
+(`422 content`; the message stays unconfirmed, so confirm it again without the detail). Confirming
+is idempotent: the same message confirmed again returns the first confirmation. Another
+deliverer's message is `404 not_found`.
 
 ## Clients
 
@@ -349,9 +356,12 @@ re-route, relabel or retire (a coordinator gets `403`).
   once.
 - `PATCH /v1/clients/{name}` `{label?, deliverer?, retired?: true}`: change the label, register
   the client with a deliverer (`null`: none; its waiting messages then go to the coordinator), or
-  retire it. Retiring is refused (`invalid`, field `retired`) while the client owns open items:
-  hand them over or close them first. A retired client's token stops working; its name stays
-  taken, and views show it with role `unknown`.
+  retire it. Retiring is refused (`invalid`, field `retired`) while the client owns open items
+  (hand them over or close them first), and for the coordinator: the configured one, or the last
+  coordinator when none is configured. A retired client's token stops working and its deliverer
+  registration ends: messages still waiting for it go to the coordinator if a deliverer reaches the
+  coordinator, and are withdrawn otherwise. Its name stays taken, views show it with role
+  `unknown`, and a question it asked no longer names it as the place to answer.
 
 ## Monitoring
 
