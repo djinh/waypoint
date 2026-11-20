@@ -42,6 +42,7 @@ export WAYPOINT_NAME=alice WAYPOINT_TOKEN_FILE=alice.token
 | [docs/INSTALL.md](docs/INSTALL.md) | Installing on a server from scratch: daemon, clients, deliverers, MCP, backups, monitoring, upgrades |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting, its default and where it is set |
 | [docs/USAGE.md](docs/USAGE.md) | Using it: `wp`, the MCP tools, the HTTP API, what the adapters send, with worked examples |
+| [docs/AGENTS.md](docs/AGENTS.md) | Working with Waypoint: rules for agent sessions, and a block for your agents' instructions |
 | [docs/API.md](docs/API.md), [docs/api/openapi.yaml](docs/api/openapi.yaml) | The HTTP API contract |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The code |
 

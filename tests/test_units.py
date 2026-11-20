@@ -36,3 +36,11 @@ def test_no_secrets_or_wide_binds(name):
 def test_backup_unit_has_no_network():
     svc = unit("waypoint-backup.service")["Service"]
     assert svc["PrivateNetwork"] == "yes" and svc["User"] == "waypoint" and "backup" in svc["ExecStart"]
+
+
+@pytest.mark.parametrize("name", ["waypoint.service", "waypoint-backup.service"])
+def test_state_directory_stays_private(name):
+    # without StateDirectoryMode systemd resets the directory to 0755 each time the unit starts
+    svc = unit(name)["Service"]
+    assert svc["StateDirectory"] == "waypoint" and svc["StateDirectoryMode"] == "0700"
+

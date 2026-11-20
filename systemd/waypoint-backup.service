@@ -12,6 +12,8 @@ User=waypoint
 Group=waypoint
 ExecStart=/opt/waypoint/bin/waypointd --config /etc/waypoint/waypoint.toml backup /var/lib/waypoint/backup
 StateDirectory=waypoint
+# The same mode as waypoint.service; without it systemd resets the directory to 0755 on each run.
+StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict

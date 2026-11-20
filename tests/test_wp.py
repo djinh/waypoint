@@ -95,9 +95,10 @@ def test_tracks(run):
 
 def test_clients(run, tmp_path, server):
     newfile = tmp_path / "agent-d.token"
-    code, out, _ = run("coordinator", "client", "add", "agent-d", "--role", "agent", "--deliverer", "host-1",
-                       "--token-file", str(newfile))
-    assert code == 0 and out.splitlines()[0] == "agent-d (agent) · via host-1"
+    code, out, err = run("coordinator", "client", "add", "agent-d", "--role", "agent", "--deliverer", "host-1",
+                         "--token-file", str(newfile))
+    # stdout stays empty: the status goes to stderr, so a script capturing stdout gets nothing extra
+    assert code == 0 and out == "" and err.splitlines()[0] == "agent-d (agent) · via host-1"
     assert stat.S_IMODE(newfile.stat().st_mode) == 0o600
     token = newfile.read_text().strip()
     assert token not in out
@@ -106,8 +107,11 @@ def test_clients(run, tmp_path, server):
     code, out, _ = run("agent-a", "client", "ls")
     assert code == 1
     rotated = tmp_path / "agent-d.new"
-    code, out, _ = run("alice", "client", "rotate", "agent-d", "--token-file", str(rotated))
+    code, out, err = run("alice", "client", "rotate", "agent-d", "--token-file", str(rotated))
     assert code == 0 and rotated.read_text().strip() != token
+    assert out == "" and "token written to" in err
+    code, out, _ = run("alice", "--json", "client", "rotate", "agent-d", "--token-file", str(tmp_path / "j"))
+    assert code == 0 and json.loads(out)["name"] == "agent-d" and "token" not in json.loads(out)
     code, out, _ = run("alice", "client", "route", "agent-d", "-")
     assert out == "agent-d (agent)"
     code, out, _ = run("alice", "client", "retire", "agent-d")

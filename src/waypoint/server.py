@@ -7,7 +7,8 @@
     waypointd [--config FILE] backup DIR
     waypointd [--config FILE] check [--config-only]
 
-Tokens are written only to the named file, created with mode 0600; they are never printed.
+Tokens are written only to the named file, created with mode 0600; they are never printed. The
+client commands print their status line on stderr and nothing on stdout.
 """
 
 from __future__ import annotations
@@ -185,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         except ApiError as e:
             print(f"waypointd: {e.message}", file=sys.stderr)
             return 1
-        print(f"waypointd: {args.name} is reached through {args.deliverer}")
+        print(f"waypointd: {args.name} is reached through {args.deliverer}", file=sys.stderr)
         return 0
     if args.action == "add":
         if args.deliverer:
@@ -212,7 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     except ApiError as e:
         print(f"waypointd: {e.message}", file=sys.stderr)
         return 1
-    print(f"waypointd: token for {args.name} written to {args.token_file}")
+    # stderr: stdout stays empty, so a script that captures it (or pipes the token file after it)
+    # gets nothing but what it asked for
+    print(f"waypointd: token for {args.name} written to {args.token_file}", file=sys.stderr)
     return 0
 
 

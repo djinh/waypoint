@@ -83,6 +83,8 @@ def test_client_add_writes_a_private_token_file(tmp_path, capsys):
     token = tok.read_text().strip()
     out = capsys.readouterr()
     assert token not in out.out and token not in out.err
+    # the status line is on stderr; stdout stays empty for scripts that capture it
+    assert out.out == "" and "token for agent-a written to" in out.err
     # refuses to overwrite, and rotation invalidates the old token
     assert server.main(["--config", str(cfgp), "client", "rotate", "agent-a", "--token-file", str(tok)]) == 1
     tok2 = tmp_path / "agent-a.token2"
@@ -120,7 +122,10 @@ def test_client_route(tmp_path, capsys):
     assert run("client", "add", "agent-b", "agent", "--token-file", str(tmp_path / "b"), "--deliverer", "agent-a") == 1
     assert not (tmp_path / "b").exists()
     assert run("client", "add", "agent-b", "agent", "--token-file", str(tmp_path / "b")) == 0
+    capsys.readouterr()
     assert run("client", "route", "agent-b", "host-1") == 0
+    out = capsys.readouterr()
+    assert out.out == "" and "reached through host-1" in out.err
     assert run("client", "route", "agent-b", "nobody") == 1
     from waypoint.store import Store
     st = Store(db.connect(tmp_path / "w.db"))

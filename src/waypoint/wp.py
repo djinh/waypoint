@@ -219,7 +219,8 @@ def _dumps(value, indent=None) -> str:
     return json.dumps(value, indent=indent, ensure_ascii=False).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
 
-def run(args, out) -> int:
+def run(args, out, err=None) -> int:
+    err = err or sys.stderr
     if args.cmd == "health":
         got = WaypointClient(args.url, "", timeout=10).request("GET", "/v1/health")
         print(_dumps(got) if args.json else f"{got['status']} {got['version']}", file=out)
@@ -321,11 +322,11 @@ def run(args, out) -> int:
         t = api("PUT", f"/v1/tracks/{client_name(args.id)}", body)
         show(t, f"{t['id']}: {t['title']}")
     elif args.cmd == "client":
-        return run_client(args, api, show)
+        return run_client(args, api, show, err)
     return 0
 
 
-def run_client(args, api, show) -> int:
+def run_client(args, api, show, err) -> int:
     def describe(c):
         bits = [f"{c['name']} ({c['role']})"]
         if c["label"]:
@@ -363,7 +364,12 @@ def run_client(args, api, show) -> int:
             raise Usage("the token file exists already; remove it or name another") from None
         except OSError:
             raise Usage("cannot write the token file") from None
-        show(got["client"], describe(got["client"]) + f"\ntoken written to {args.new_token_file}")
+        # the client record is data (--json prints it on stdout); in text mode the status line goes to
+        # stderr, so stdout stays empty for a script that captures it
+        if args.json:
+            show(got["client"], "")
+        else:
+            print(describe(got["client"]) + f"\ntoken written to {args.new_token_file}", file=err)
     elif args.action == "route":
         c = api("PATCH", f"/v1/clients/{client_name(args.client)}",
                 {"deliverer": None if args.deliverer == "-" else args.deliverer})
@@ -385,7 +391,7 @@ def main(argv: list[str] | None = None, out=None, err=None) -> int:
         return code
 
     try:
-        return run(args, out)
+        return run(args, out, err)
     except (Usage, InputError) as e:
         return fail(2, {"code": "usage", "message": str(e)}, str(e))
     except Unavailable:

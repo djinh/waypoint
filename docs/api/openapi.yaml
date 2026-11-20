@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Waypoint API
-  version: 0.1.16
+  version: 0.1.17
   summary: Open items, dependencies and wake-ups for a group of agent sessions.
   description: |
     The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client

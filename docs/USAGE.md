@@ -66,7 +66,10 @@ Other commands: `wp ls` (filters `--owner`, `--track`, `--state`, `--waiting-on`
 
 ## The MCP tools (for agent sessions)
 
-`waypoint-mcp` gives an agent seven tools. Answers are short text, one line per item, as above.
+`waypoint-mcp` gives an agent seven tools. How an agent session should work with them (when to
+call `wp_mine`, states, wake-up lines, questions for people, one item per unit of work) is in
+[AGENTS.md](AGENTS.md), with a block to paste into your agents' instructions.
+Answers are short text, one line per item, as above.
 Line breaks and other control characters in text other clients wrote are shown as spaces (in `wp`
 too), so such text never starts a line of its own.
 

@@ -215,8 +215,8 @@ or in a project's `.mcp.json`:
 
 The server inherits the session's environment, so whatever starts a session sets `WAYPOINT_NAME`
 for it (for example in the session's systemd unit or start script), and the session's token is at
-the default path (or `WAYPOINT_TOKEN_FILE` points to it). Tell your agents to keep their open items
-in Waypoint and to call `wp_mine` after every restart or compaction.
+the default path (or `WAYPOINT_TOKEN_FILE` points to it). Tell your agents how to work with
+Waypoint: [AGENTS.md](AGENTS.md) has the rules and a block to paste into their instructions.
 
 ## 5. Backups
 

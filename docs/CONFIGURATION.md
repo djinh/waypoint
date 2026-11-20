@@ -110,6 +110,9 @@ characters), a role and a token:
   client is registered over the API by a human or coordinator: `wp client add NAME --role ROLE
   --token-file PATH [--deliverer DELIVERER]`.
 - **Token files** are created new with mode 0600 and never overwritten; the token is never printed.
+  `waypointd client add|rotate|route` and `wp client add|rotate` print their status line on stderr
+  and nothing on stdout (`wp --json` prints the client record, without the token), so a script can
+  capture stdout or pipe the token file right after the command.
   Waypoint stores only a hash. Put each file where its client's Unix user, and only that user, can
   read it; by default `~/.config/waypoint/tokens/<name>.token` (directory mode 0700).
 - **Routing**: a recipient's messages go through the deliverer it is registered with
