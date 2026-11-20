@@ -62,11 +62,11 @@ Other commands: `wp ls` (filters `--owner`, `--track`, `--state`, `--waiting-on`
 `--answer-issue`/`--answer-session`; conditions with `--add-waits-on`, `--remove-waits-on`, or
 `--waits-on` to replace them all, `--waits-on ''` to clear), `wp drop ID REASON`, `wp tracks`,
 `wp track put ID …` (keeps a track archived or not unless `--archived`/`--no-archived` says),
-`wp client …` (humans and coordinators), `wp health`.
+`wp messages` (my recent messages in full), `wp client …` (humans and coordinators), `wp health`.
 
 ## The MCP tools (for agent sessions)
 
-`waypoint-mcp` gives an agent seven tools. How an agent session should work with them (when to
+`waypoint-mcp` gives an agent eight tools. How an agent session should work with them (when to
 call `wp_mine`, states, wake-up lines, questions for people, one item per unit of work) is in
 [AGENTS.md](AGENTS.md), with a block to paste into your agents' instructions.
 Answers are short text, one line per item, as above.
@@ -82,6 +82,7 @@ too), so such text never starts a line of its own.
 | `wp_update` | `id`, `state`, `note`, `due`, `wake`, `when`, `until`, `add_waits_on`, `waits_on`, `title`, `label`, `owner`, `answer_at`, `running_until` | Change one of my items; `''` clears a field. |
 | `wp_done` | `id`, `note` | Mark it done; Waypoint wakes whoever waited on it. |
 | `wp_ask` | `human`, `question`, `title`, `options`, `recommendation`, `for_item`, `track`, `due`, `answer_at`, `links` | Put a decision to a person and make my item wait on it, in one step. |
+| `wp_messages` | `limit`, `since` | My recent messages from Waypoint in full, newest first, with what became of each: what a short wake-up line only names. |
 
 A typical start of a session's turn after a restart:
 

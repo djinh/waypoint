@@ -19,6 +19,12 @@ do, they do through it.
 - **Times** are RFC 3339 with seconds and a zone. Waypoint stores and answers in UTC (`Z`). Input
   without a zone is refused. The deployment's time zone (`tz` in the views) is for display, and for
   days (below).
+- **One-line text**: titles, labels, notes, question texts, options and recommendations, link
+  labels, track titles and notes, and client labels are one line each. Line breaks and other
+  control characters are refused (`400 invalid`, naming the field). Text stored before 0.2 may still
+  hold them in answers; `wp` and the MCP tools show it on one line.
+- **Patterns** in the contract (names, ids, times, one-line text) match as JSON Schema means them:
+  `$` is the end of the value, so a trailing newline is refused too.
 - **Unknown fields** in a request are refused (`400 invalid`), never stored or silently dropped;
   so are unknown query parameters. Bodies are JSON objects of at most 64 KiB.
 - **No missing fields** in responses: a field without a value is `null` or `[]`, so readers never
@@ -143,6 +149,10 @@ forever:
   recorded in the history as Waypoint's own change. Counting from the confirmation means an owner
   whose pane was busy isn't punished for the delivery's delay; time Waypoint was down doesn't count.
 - Leaving `running` clears all of it.
+- A lapse re-arms the overdue ladder of a late item: the owner's earlier updates no longer count as
+  attending to it, and the steps not taken yet are counted from the lapse (no catch-up of those that
+  fell due while it ran): with the default ladder, a nudge at the lapse, then escalate and flag an
+  hour later.
 
 ### Flags
 
@@ -335,6 +345,15 @@ for the recipient. A message first handed out more than 5 minutes after it fell 
 deliverer wasn't fetching, gets `late` with reason `recipient_away` and " (delivered late, due
 14:00)" at the end of its text.
 
+### `GET /v1/messages`
+
+A recipient's own messages, in full, newest `fell_due_at` first: `{"messages": [{id, kind, item,
+items, fell_due_at, text, state, settled_at}]}`. `state` is `pending`, `delivered`,
+`undeliverable` or `withdrawn`; `settled_at` is when it was confirmed or withdrawn. Query: `since`
+(a timestamp) and `limit` (1–100, default 20). Only the caller's own messages, for every role but
+`deliverer` (which reads its queue above). This is where a recipient whose deliverer types only a
+short line (`"ref"` mode) reads the details, e.g. of an outage summary.
+
 ### `POST /v1/deliveries/{id}/ack`
 
 Body `{"result": "delivered"}` or `{"result": "undeliverable", "detail": "..."}`. `undeliverable`
@@ -377,7 +396,9 @@ needs one; any role that reads (agent, human, coordinator, reader) may read thes
   `silent` after 5 minutes), `recipients_without_deliverer`, `stuck_deliveries` (not confirmed 30
   minutes after they fell due), `late_items`, `unknown_owners` (open items whose owner isn't a
   registered client any more) and `running_stale` (running for more than a day without an
-  update). `ok` is true only when all of these are empty and the scheduler isn't behind.
+  update), and `coordinator` (`name`, `live`, `routed`: who hears about escalations, whether it is a
+  registered, unretired coordinator, and whether a deliverer reaches it). `ok` is true only when all
+  of these lists are empty, the scheduler isn't behind and there is a live coordinator.
 - `GET /metrics`: the same as counts in the Prometheus text format (`waypoint_items{state=…}`,
   `waypoint_items_late`, `waypoint_items_at_risk`, `waypoint_messages_waiting`,
   `waypoint_deliveries_stuck`, `waypoint_deliverer_last_seen_seconds{deliverer=…}`,
@@ -393,7 +414,8 @@ request body or a token.
 | 400 | `invalid` | Malformed request, bad value or query parameter, unknown field. `field` names it; for a value that is too long or too short the message gives its length and the limit ("note: 260 characters, at most 200"), never the value. |
 | 401 | `unauthorized` | No token, or not a valid one. |
 | 403 | `forbidden` | The caller's role may not do this. |
-| 404 | `not_found` | No such item, track, human, or not the caller's delivery. |
+| 404 | `not_found` | No such item, track, human, or not the caller's delivery; or no such endpoint. |
+| 405 | `method_not_allowed` | The path exists but not with this method; the `Allow` header lists the methods it has. |
 | 409 | `loop` | The write would close a loop of conditions; `cycle` names it. |
 | 409 | `version_conflict` | `if_version` did not match. |
 | 422 | `content` | A field looks like a secret, an address or personal data; `field` names it. |

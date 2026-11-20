@@ -151,6 +151,39 @@ class Deliveries:
             "links": json.loads(r["links"]),
         }
 
+    def mine(self, caller: Client, since: datetime | None = None, limit: int = 20) -> list[dict]:
+        """The caller's own messages, newest first: everything Waypoint sent it, in full, with what
+        became of each. A recipient reads here what a "ref" line only names."""
+        if caller.role == "deliverer":
+            raise ApiError("forbidden", "deliverers read their queue at /v1/deliveries")
+        sql, args = "SELECT * FROM messages WHERE recipient = ?", [caller.name]
+        if since is not None:
+            sql += " AND fell_due_at >= ?"
+            args.append(fmt(since))
+        sql += " ORDER BY fell_due_at DESC, num DESC LIMIT ?"
+        args.append(limit)
+        with self.store.read() as c:
+            rows = c.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            if r["withdrawn_at"]:
+                state = "withdrawn"
+            elif r["acked_at"]:
+                state = r["ack_result"] or "delivered"
+            else:
+                state = "pending"
+            out.append({
+                "id": delivery_id(r["num"]),
+                "kind": r["kind"],
+                "item": item_id(r["item"]) if r["item"] is not None else None,
+                "items": json.loads(r["items"]),
+                "fell_due_at": r["fell_due_at"],
+                "text": r["text"],
+                "state": state,
+                "settled_at": r["withdrawn_at"] or r["acked_at"],
+            })
+        return out
+
     def next_lease_end(self, caller: Client) -> datetime | None:
         """When the earliest lease of this deliverer's pending messages runs out."""
         with self.store.read() as c:

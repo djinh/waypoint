@@ -13,7 +13,7 @@ questions only they can answer.
   escalations to a coordinator, caught up correctly after downtime.
 - **Delivery** into an agent's terminal (tmux, only into an empty input box and never over a
   person's typing), as a push notification, or as a webhook.
-- **Interfaces**: an HTTP API, seven MCP tools for agent sessions, and the `wp` command line.
+- **Interfaces**: an HTTP API, eight MCP tools for agent sessions, and the `wp` command line.
 - **Safe defaults**: listens on localhost, a token on every request, the daemon never runs a
   command (the deliverer only calls `tmux` to type a line), refuses text that looks like secrets or
   addresses.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from importlib import resources
 
@@ -17,13 +18,36 @@ def spec() -> dict:
 
 
 @lru_cache(maxsize=None)
+def ecma(pattern: str) -> re.Pattern:
+    r"""A contract pattern as JSON Schema means it (ECMA-262), not as Python's re would read it: `$`
+    at the end matches only the end of the text (Python's also matches before a final newline, so
+    "demo\n" would pass `^[a-z]+$`), and `\d` means ASCII digits only."""
+    if pattern.endswith("$") and not pattern.endswith("\\$"):
+        pattern = pattern[:-1] + r"\Z"
+    # \d: ASCII digits, as in ECMA; \s stays Unicode-aware, as ECMA's is (no pattern uses \w)
+    return re.compile(pattern.replace(r"\d", "[0-9]"))
+
+
+def _pattern(validator, pattern, instance, schema):
+    if validator.is_type(instance, "string") and not ecma(pattern).search(instance):
+        yield jsonschema.ValidationError("does not match the expected form")  # never echo the value
+
+
+_Validator = jsonschema.validators.extend(jsonschema.Draft202012Validator, {"pattern": _pattern})
+
+
+# The contract's pattern for one-line text fields (titles, labels, notes, questions).
+ONE_LINE = "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
+
+
+@lru_cache(maxsize=None)
 def validator(name: str) -> jsonschema.Draft202012Validator:
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$ref": f"#/components/schemas/{name}",
         "components": spec()["components"],
     }
-    return jsonschema.Draft202012Validator(schema)
+    return _Validator(schema)
 
 
 def check(name: str, body) -> None:
@@ -69,6 +93,8 @@ def _why(err) -> str:
         return "nothing to change"
     if v == "enum":
         return "one of " + ", ".join(str(x) for x in limit)
+    if v == "pattern" and limit == ONE_LINE:
+        return "one line, without line breaks or other control characters"
     if v == "pattern":
         return "not in the expected form"
     if v == "type":

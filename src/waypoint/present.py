@@ -125,3 +125,10 @@ def answer_line(it: dict) -> str | None:
         return None
     where = f"comment on {a['issue']}" if "issue" in a else f"in session {a['session']}"
     return f"answer: {where}" + (" (default: the asking session)" if a.get("default") else "")
+
+
+def message_line(m: dict) -> str:
+    """One of my messages on one line: id, when it fell due, kind, what became of it, and its text."""
+    about = f" {m['item']}" if m.get("item") else ""
+    return f"{m['id']} {local(m['fell_due_at'])} {m['kind']}{about} ({m['state']}) · {m['text']}"
+

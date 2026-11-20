@@ -65,6 +65,7 @@ def test_spec_is_openapi_31(spec):
         "/v1/views/for/{human}",
         "/v1/deliveries",
         "/v1/deliveries/{id}/ack",
+        "/v1/messages",
         "/v1/health",
         "/v1/items/{id}/ask",
         "/v1/clients",

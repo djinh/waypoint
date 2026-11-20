@@ -186,13 +186,14 @@ agent's mouth. With `"ref"` the deliverer types only Waypoint's own words and th
 
 and the session reads the item with its tools, where it is plainly data. Messages without an item
 get a fixed sentence (for example the coordinator's outage summary: "Waypoint was down for a while
-… check your items with wp_mine"), so in `"ref"` mode their details are not typed; `/v1/status`
-shows silent deliverers and stuck messages. `"full"` stays the default only so that existing
+(outage summary): read it with wp_messages"), so in `"ref"` mode their details are not typed; the
+recipient reads them with `wp_messages` (or `wp messages`), and `/v1/status` shows silent deliverers
+and stuck messages. `"full"` stays the default only so that existing
 configurations keep working.
 
 ## 4. The MCP server for agent sessions
 
-`waypoint-mcp` gives a session Waypoint's seven tools. It is a stdio MCP server that the agent's
+`waypoint-mcp` gives a session Waypoint's eight tools. It is a stdio MCP server that the agent's
 client starts per session; it takes everything from its environment:
 
 | Variable | Meaning |

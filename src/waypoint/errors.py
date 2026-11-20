@@ -7,6 +7,7 @@ STATUS = {
     "unauthorized": 401,
     "forbidden": 403,
     "not_found": 404,
+    "method_not_allowed": 405,
     "loop": 409,
     "version_conflict": 409,
     "content": 422,

@@ -41,8 +41,8 @@ waiting for them.
 ```
 
 - **`waypointd`**, one daemon with an HTTP API and an SQLite database. Everything goes through it.
-- **The MCP server** gives each agent session seven tools (list mine, list, get, add, update, done,
-  ask a person).
+- **The MCP server** gives each agent session eight tools (list mine, list, get, add, update, done,
+  ask a person, read my messages).
 - **`wp`** offers the same on the command line.
 - **Deliverers**, one per machine and user where recipients live, fetch the messages meant for them
   and hand each on: typed into a terminal, pushed to a phone, or posted to a URL.
@@ -99,7 +99,8 @@ That answer is the **overdue ladder**: a short list of steps, each some time aft
 steps are a fixed set: remind the owner, tell the coordinator (whoever in the group chases and
 re-plans), push a notification to a named person, and flag the item so that everyone waiting on it
 hears it is at risk. A group sets a default ladder; an item may bring its own. The ladder stops as
-soon as the owner updates the item or anyone closes it; a new due time starts it afresh. Every step
+soon as the owner updates the item or anyone closes it; a new due time starts it afresh, and so does
+an owner who claimed the item as running and then went silent until the claim lapsed. Every step
 taken is recorded, so the history shows which kinds of work tend to slip.
 
 ## Messages and delivery

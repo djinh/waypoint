@@ -178,6 +178,9 @@ class Store:
         if label is not None:  # the same rules as over the API, also for `waypointd client add`
             if not 1 <= len(label) <= 40:
                 raise ApiError("invalid", "label: 1 to 40 characters", field="label")
+            if not schema.ecma(schema.ONE_LINE).search(label):
+                raise ApiError("invalid", "label: one line, without line breaks or other control characters",
+                               field="label")
             if content.problem(label):
                 raise ApiError("content", "label: looks like it holds data that must not be stored", field="label")
         token = secrets.token_urlsafe(32)

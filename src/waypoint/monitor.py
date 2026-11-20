@@ -49,12 +49,24 @@ def status(store: Store) -> dict:
         stale = [_item(r, r["updated_at"]) for r in c.execute(
             "SELECT * FROM items WHERE state = 'running' AND updated_at < ? ORDER BY updated_at, num",
             (fmt(now - STALE_RUNNING),))]
+        coordinator = _coordinator(store, c)
     behind = last_pass is None or now - parse_ts(last_pass) > BEHIND
-    ok = not (behind or any(d["silent"] for d in deliverers) or unreached or stuck or late or unknown or stale)
+    ok = not (behind or any(d["silent"] for d in deliverers) or unreached or stuck or late or unknown or stale
+              or not coordinator["live"])
     return {"generated_at": fmt(now), "version": __version__, "ok": ok,
             "scheduler": {"last_pass": last_pass, "behind": behind}, "deliverers": deliverers,
             "recipients_without_deliverer": unreached, "stuck_deliveries": stuck, "late_items": late,
-            "unknown_owners": unknown, "running_stale": stale}
+            "unknown_owners": unknown, "running_stale": stale, "coordinator": coordinator}
+
+
+def _coordinator(store: Store, c) -> dict:
+    """Who hears about escalations: the configured or first live coordinator, whether it is a live
+    coordinator, and whether a deliverer reaches it. Without a live one, escalations go nowhere."""
+    name = store.coordinator()
+    row = c.execute("SELECT role, deliverer FROM clients WHERE name = ? AND retired_at IS NULL", (name,)).fetchone() \
+        if name else None
+    live = row is not None and row["role"] == "coordinator"
+    return {"name": name, "live": live, "routed": bool(live and row["deliverer"])}
 
 
 def _item(r, since: str) -> dict:

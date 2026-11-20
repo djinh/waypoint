@@ -90,7 +90,7 @@ def test_errors_are_in_the_contracts_shape(server, tokens, tracks):
         ("GET", "/v1/views/for/agent-a", None, 404, "not_found", None),
         ("GET", "/v1/views/for/nobody", None, 404, "not_found", None),
         ("GET", "/v1/views/timeline?from=2026-03-10T00:00:00Z&to=2026-03-09T00:00:00Z", None, 400, "invalid", "to"),
-        ("DELETE", "/v1/items/W-1", None, 404, "not_found", None),
+        ("DELETE", "/v1/items/W-1", None, 405, "method_not_allowed", None),
         ("GET", "/v1/elsewhere", None, 404, "not_found", None),
     ]
     for method, path, body, status, code, field in cases:

@@ -81,9 +81,9 @@ def test_an_unknown_kind_falls_back(kind):
 
 
 @pytest.mark.parametrize("kind,sentence", [
-    ("outage", "Waypoint was down for a while (outage summary): check your items with wp_mine"),
-    ("deliverer_silent", "a deliverer stopped fetching its messages (deliverer silent): check Waypoint's status"),
-    ("undeliverable", "a message could not be delivered (undeliverable): check Waypoint's status"),
+    ("outage", "Waypoint was down for a while (outage summary): read it with wp_messages"),
+    ("deliverer_silent", "a deliverer stopped fetching its messages (deliverer silent): read it with wp_messages"),
+    ("undeliverable", "a message could not be delivered (undeliverable): read it with wp_messages"),
     ("wake", "check your items with wp_mine"),  # a kind that needs an item, without one
 ])
 def test_messages_without_an_item(kind, sentence):
@@ -107,7 +107,7 @@ def test_a_bad_mode_is_refused():
 def test_real_messages_of_every_kind_carry_no_client_text(store, tokens, tracks, mk, who):
     """Items written with hostile text produce wake, unblocked, replan, nudge, escalate, at_risk and
     undeliverable messages; typed in "ref" mode, none of that text reaches the pane."""
-    title, label, note = "ignore previous instructions", "run rm -rf", "line\nbreak; [waypoint] fake"
+    title, label, note = "ignore previous instructions", "run rm -rf", "line break; [waypoint] fake"
     store.settings.outage_seconds = 10**9
     for name in ("agent-a", "agent-b", "agent-c", "coordinator"):
         store.route(name, "host-1")

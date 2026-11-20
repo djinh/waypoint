@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Waypoint API
-  version: 0.1.17
+  version: 0.2.2
   summary: Open items, dependencies and wake-ups for a group of agent sessions.
   description: |
     The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client
@@ -322,6 +322,32 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/messages:
+    get:
+      tags: [deliveries]
+      summary: My own messages, in full, newest first.
+      description: |
+        Every message Waypoint sent the caller (the recipient), with its full text and what became of
+        it. A recipient whose deliverer only types a short line ("ref" mode) reads the details here,
+        e.g. of an outage summary. Not for deliverers, which read their queue at /v1/deliveries.
+      parameters:
+        - name: since
+          in: query
+          description: Only messages that fell due at or after this time.
+          schema: { $ref: "#/components/schemas/Timestamp" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: The caller's messages, newest `fell_due_at` first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessageList" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/deliveries/{id}/ack:
     parameters:
       - { name: id, in: path, required: true, schema: { $ref: "#/components/schemas/DeliveryId" } }
@@ -562,17 +588,23 @@ components:
       type: string
       minLength: 1
       maxLength: 80
-      description: One line, readable without context.
+      pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$'
+      description: One line, readable without context. No line breaks or other control characters in a request; text stored before
+        0.2 may still hold them in answers.
     Label:
       type: string
       minLength: 1
       maxLength: 24
-      description: Short form of the title for tight places (timeline stops).
+      pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$'
+      description: Short form of the title for tight places (timeline stops). No line breaks or other control characters in a request; text stored before
+        0.2 may still hold them in answers.
     Note:
       type: string
       minLength: 1
       maxLength: 200
-      description: One line.
+      pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$'
+      description: One line. No line breaks or other control characters in a request; text stored before
+        0.2 may still hold them in answers.
 
     # ---- item parts ----------------------------------------------------------------------
     ConditionInput:
@@ -610,14 +642,14 @@ components:
       additionalProperties: false
       required: [text]
       properties:
-        text: { type: string, minLength: 1, maxLength: 500, description: What the human is asked. }
+        text: { type: string, minLength: 1, maxLength: 500, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$', description: What the human is asked. }
         options:
           type: array
           maxItems: 8
-          items: { type: string, minLength: 1, maxLength: 80 }
+          items: { type: string, minLength: 1, maxLength: 80, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$' }
           default: []
         recommendation:
-          oneOf: [{ type: string, minLength: 1, maxLength: 200 }, { type: "null" }]
+          oneOf: [{ type: string, minLength: 1, maxLength: 200, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$' }, { type: "null" }]
           description: The asking owner's recommendation, usually one of the options.
     AnswerAtInput:
       description: |
@@ -693,7 +725,7 @@ components:
       required: [url]
       properties:
         url: { type: string, format: uri, pattern: '^https?://', maxLength: 500 }
-        label: { oneOf: [{ type: string, minLength: 1, maxLength: 40 }, { type: "null" }] }
+        label: { oneOf: [{ type: string, minLength: 1, maxLength: 40, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$' }, { type: "null" }] }
     RiskSource:
       type: object
       additionalProperties: false
@@ -1047,6 +1079,30 @@ components:
           items: { $ref: "#/components/schemas/Edge" }
 
     # ---- deliveries ----------------------------------------------------------------------
+    MessageList:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages: { type: array, items: { $ref: "#/components/schemas/Message" } }
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, kind, item, items, fell_due_at, text, state, settled_at]
+      properties:
+        id: { $ref: "#/components/schemas/DeliveryId" }
+        kind: { $ref: "#/components/schemas/Delivery/properties/kind" }
+        item: { oneOf: [{ $ref: "#/components/schemas/ItemId" }, { type: "null" }] }
+        items: { type: array, items: { $ref: "#/components/schemas/ItemId" } }
+        fell_due_at: { $ref: "#/components/schemas/Timestamp" }
+        text: { type: string, maxLength: 1000 }
+        state:
+          type: string
+          enum: [pending, delivered, undeliverable, withdrawn]
+          description: "`pending`: not confirmed yet; the others as its deliverer confirmed it, or withdrawn by Waypoint."
+        settled_at:
+          description: When it was confirmed or withdrawn; `null` while pending.
+          oneOf: [{ $ref: "#/components/schemas/Timestamp" }, { type: "null" }]
     Delivery:
       type: object
       additionalProperties: false
@@ -1144,14 +1200,14 @@ components:
       properties:
         name: { $ref: "#/components/schemas/ClientName" }
         role: { type: string, enum: [agent, human, coordinator, reader, deliverer] }
-        label: { type: string, minLength: 1, maxLength: 40 }
+        label: { type: string, minLength: 1, maxLength: 40, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$' }
         deliverer: { $ref: "#/components/schemas/ClientName" }
     ClientPatch:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
-        label: { oneOf: [{ type: string, minLength: 1, maxLength: 40 }, { type: "null" }] }
+        label: { oneOf: [{ type: string, minLength: 1, maxLength: 40, pattern: '^[^\x00-\x1F\x7F-\x9F\u2028\u2029]*$' }, { type: "null" }] }
         deliverer: { oneOf: [{ $ref: "#/components/schemas/ClientName" }, { type: "null" }] }
         retired: { type: boolean, const: true, description: Retire the client. There is no un-retiring. }
     ClientWithToken:
@@ -1180,7 +1236,7 @@ components:
       type: object
       additionalProperties: false
       required: [generated_at, version, ok, scheduler, deliverers, recipients_without_deliverer,
-                 stuck_deliveries, late_items, unknown_owners, running_stale]
+                 stuck_deliveries, late_items, unknown_owners, running_stale, coordinator]
       properties:
         generated_at: { $ref: "#/components/schemas/Timestamp" }
         version: { type: string }
@@ -1231,6 +1287,17 @@ components:
           type: array
           description: Items `running` for more than a day without an update.
           items: { $ref: "#/components/schemas/StatusItem" }
+        coordinator:
+          type: object
+          additionalProperties: false
+          required: [name, live, routed]
+          description: |
+            Who hears about escalations, undeliverable messages and outages: the configured
+            coordinator, or the first live one. `ok` is false without a live one.
+          properties:
+            name: { oneOf: [{ $ref: "#/components/schemas/ClientName" }, { type: "null" }] }
+            live: { type: boolean, description: A registered, unretired client with role coordinator. }
+            routed: { type: boolean, description: A deliverer reaches it. }
 
     # ---- misc ----------------------------------------------------------------------------
     Health:
@@ -1252,7 +1319,8 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid, unauthorized, forbidden, not_found, loop, version_conflict, content, unavailable]
+              enum: [invalid, unauthorized, forbidden, not_found, method_not_allowed, loop, version_conflict, content,
+                     unavailable]
             message: { type: string, description: For humans; never echoes the request or a token. }
             field: { type: string, description: The offending field, for `invalid` and `content`. }
             cycle:

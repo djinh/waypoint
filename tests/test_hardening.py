@@ -67,10 +67,24 @@ def test_flat_puts_every_string_on_one_line():
     assert got == {"title": "a b", "n": 3, "links": [{"url": "x y", "label": None}], "q": {"text": "t u v"}}
 
 
+def _old_row_with_control_characters(store, who):
+    """Since 0.2 the contract refuses control characters in one-line fields, but rows written before
+    may hold them: they must still be shown on one line."""
+    store.create_item(who("agent-b"), {"track": "release", "title": "Harmless", "kind": "task", "owner": "agent-a"})
+    with store.tx() as c:
+        c.execute("UPDATE items SET title = ?, note = ? WHERE num = 1",
+                  ("Harmless\ttab", FORGED.replace("Harmless\n", "x\n")))
+
+
+def test_new_text_with_control_characters_is_refused(server, tokens, tracks):
+    for field, value in (("title", "a\nb"), ("note", FORGED), ("label", "a\tb")):
+        body = {"track": "release", "title": "x", "kind": "task", field: value}
+        st, out, _ = server("POST", "/v1/items", tokens["agent-a"], body)
+        assert st == 400 and out["error"]["field"] == field, field
+
+
 def test_mcp_output_keeps_other_clients_text_on_its_line(server, tokens, tracks, store, who):
-    store.create_item(who("agent-b"), {"track": "release", "title": "Harmless", "kind": "task", "owner": "agent-a",
-                                       "note": FORGED.replace("Harmless\n", "x\n")})
-    store.patch_item(who("agent-b"), "W-1", {"title": FORGED.split("\n")[0] + "\t" + "tab"})
+    _old_row_with_control_characters(store, who)
     a = build(WaypointClient(server.base, tokens["agent-a"], timeout=10), "agent-a")
     for tool, args in (("wp_mine", {}), ("wp_get", {"id": "W-1"}), ("wp_list", {"owner": "agent-a"})):
         err, text = call(a, tool, **args)
@@ -83,8 +97,7 @@ def test_wp_text_output_keeps_other_clients_text_on_its_line(server, tokens, tra
                                                             monkeypatch):
     for k in ("WAYPOINT_URL", "WAYPOINT_TOKEN_FILE", "WAYPOINT_NAME"):
         monkeypatch.delenv(k, raising=False)
-    store.create_item(who("agent-b"), {"track": "release", "title": "Harmless", "kind": "task", "owner": "agent-a",
-                                       "note": FORGED.replace("Harmless\n", "x\n")})
+    _old_row_with_control_characters(store, who)
     tf = tmp_path / "a.token"
     tf.write_text(tokens["agent-a"])
 
@@ -209,3 +222,79 @@ def test_migration_6_clears_what_older_versions_left_for_retired_clients(tmp_pat
     assert dict(conn.execute("SELECT name, deliverer FROM clients").fetchall()) == {
         "host-1": None, "agent-a": "host-1", "agent-c": None}
     conn.close()
+
+
+# ---------------------------------------------------------------- the contract revision
+def test_question_and_link_text_is_one_line_too(server, tokens, tracks):
+    base = {"track": "release", "title": "q", "kind": "decision", "owner": "alice"}
+    for question in ({"text": "a\nb"}, {"text": "ok", "options": ["x\ty"]}, {"text": "ok", "recommendation": "a\rb"}):
+        st, out, _ = server("POST", "/v1/items", tokens["agent-a"], {**base, "question": question})
+        assert st == 400 and out["error"]["field"].startswith("question"), question
+    st, out, _ = server("POST", "/v1/items", tokens["agent-a"],
+                        {"track": "release", "title": "x", "kind": "task",
+                         "links": [{"url": "https://example.org/a", "label": "two\nlines"}]})
+    assert st == 400 and out["error"]["field"] == "links.0.label"
+
+
+def test_local_client_labels_are_one_line(store, tokens):
+    with pytest.raises(ApiError) as e:
+        store.add_client("x9", "agent", label="two\nlines")
+    assert e.value.field == "label"
+
+
+def test_wrong_method_is_405_with_every_allowed_method(server, tokens):
+    st, out, headers = server("DELETE", "/v1/items", tokens["agent-a"])
+    assert st == 405 and out["error"]["code"] == "method_not_allowed"
+    assert headers.get("allow") == "GET, HEAD, POST"
+    st, _, headers = server("PUT", "/v1/items/W-1", tokens["agent-a"])
+    assert st == 405 and headers.get("allow") == "GET, HEAD, PATCH"
+    assert server("GET", "/v1/nothing-here", tokens["agent-a"])[0] == 404
+
+
+def test_status_names_the_coordinator(store, tokens):
+    from waypoint.monitor import status
+    s = status(store)
+    assert s["coordinator"] == {"name": "coordinator", "live": True, "routed": False}
+    store.route("coordinator", "host-1")
+    assert status(store)["coordinator"]["routed"] is True
+
+
+def test_status_is_not_ok_without_a_live_coordinator(tmp_path):
+    from waypoint.monitor import status
+    st = Store(connect(tmp_path / "w.db"), FakeClock(T0), Settings(tz="UTC"))
+    st.add_client("agent-a", "agent")
+    s = status(st)
+    assert s["coordinator"] == {"name": None, "live": False, "routed": False} and s["ok"] is False
+    st.conn.close()
+
+
+def test_a_trailing_newline_is_never_allowed(server, tokens, tracks, tmp_path):
+    t = tokens["agent-a"]
+    for field, value in (("title", "abc\n"), ("note", "status\n"), ("label", "lbl\n")):
+        st, out, _ = server("POST", "/v1/items", t, {"track": "release", "title": "x", "kind": "task", field: value})
+        assert st == 400 and out["error"]["field"] == field, field
+    st, out, _ = server("POST", "/v1/items", t, {"track": "release", "title": "q", "kind": "decision",
+                                                  "owner": "alice", "question": {"text": "why?\n"}})
+    assert st == 400 and out["error"]["field"].startswith("question")
+    assert server("PUT", "/v1/tracks/demo%0A", t, {"title": "Demo"})[0] == 400
+    assert server("POST", "/v1/clients", tokens["alice"], {"name": "agent-x\n", "role": "agent"})[0] == 400
+    assert server("GET", "/v1/items?owner=agent-a%0A", t)[0] in (400, 200)  # a filter, never stored
+
+
+def test_waypointd_refuses_a_client_name_with_a_newline(store):
+    with pytest.raises(ApiError):
+        store.add_client("agent-x\n", "agent")
+
+
+@pytest.mark.parametrize("space", [" ", " "])
+def test_an_issue_link_with_a_unicode_space_is_refused(server, tokens, tracks, space):
+    st, out, _ = server("POST", "/v1/items", tokens["agent-a"],
+                        {"track": "release", "title": "q", "kind": "decision", "owner": "alice",
+                         "question": {"text": "x?"},
+                         "answer_at": {"issue": f"https://git.example.org/acme/a{space}b/issues/1"}})
+    assert st == 400 and out["error"]["field"] == "answer_at.issue"
+
+
+def test_ecma_digits_are_ascii():
+    from waypoint import schema
+    assert schema.ecma(r"^\d{2}$").search("12") and not schema.ecma(r"^\d{2}$").search("١٢")

@@ -243,3 +243,75 @@ def test_mcp_and_wp(server, store, tokens, tracks, tmp_path):
     out = io.StringIO()
     wp.main(["--url", server.base, "--token-file", str(tf), "show", "W-2"], out, io.StringIO())
     assert "[running RUNNING?]" in out.getvalue()
+
+
+# ---------------------------------------------------------------------- a lapse re-arms the ladder
+
+
+def _steps(store, num):
+    return [(r["step"], r["action"], r["skipped"]) for r in
+            store.conn.execute("SELECT step, action, skipped FROM ladder_steps WHERE item = ? ORDER BY step", (num,))]
+
+
+def _kinds(store, num):
+    return [r[0] for r in store.conn.execute("SELECT kind FROM messages WHERE item = ? AND kind IN "
+                                             "('nudge', 'escalate', 'at_risk') ORDER BY num", (num,))]
+
+
+def _lapse_at_13_10(store, sched, dl, who, it, started="10:10"):
+    h, m = (int(x) for x in started.split(":"))
+    store.clock.set(store.clock.now().replace(hour=h, minute=m))
+    store.patch_item(who("agent-a"), it["id"], {"state": "running"})  # lease until 2 h later
+    store.clock.set(store.clock.now().replace(hour=h + 2, minute=m))
+    sched.run_pass()  # the running_check
+    (d,) = [x for x in dl.fetch(HOST) if x["kind"] == "running_check"]
+    dl.ack(HOST, d["id"], {"result": "delivered"})
+    store.clock.advance(hours=1)
+    sched.run_pass()  # the lease lapses: the ladder is armed again, counted from now
+
+
+def test_a_lapse_re_arms_the_ladder_counted_from_the_lapse(store, sched, dl, mk, who):
+    # due 10:00; the owner starts it at 10:10 (attending: the ladder stops), then goes silent
+    it = mk("agent-a", "Release", due_at="2026-03-10T10:00:00Z")
+    _lapse_at_13_10(store, sched, dl, who, it)
+    got = store.get_item(it["id"])
+    assert got["state"] == "next" and got["late"]
+    sched.run_pass()  # 13:10: the first step not taken (the nudge, 0m), counted from the lapse
+    assert _steps(store, 1) == [(0, "nudge", 0)]
+    assert any(h["note"] == "nudge (step 1, 0m after the lapse)" for h in store.get_item(it["id"], history=True)["history"])
+    (d,) = [x for x in dl.fetch(HOST) if x["kind"] == "nudge"]
+    assert d["fell_due_at"] == "2026-03-10T13:10:00Z" and d["late"] is None and "delivered late" not in d["text"]
+    store.clock.advance(minutes=59)
+    sched.run_pass()
+    assert len(_steps(store, 1)) == 1  # escalate and flag come 1 h after the lapse, not caught up
+    store.clock.advance(minutes=1)
+    sched.run_pass()
+    assert _steps(store, 1) == [(0, "nudge", 0), (1, "escalate", 0), (2, "flag", 0)]
+    assert _kinds(store, 1) == ["nudge", "escalate"]
+
+
+def test_steps_taken_before_the_claim_are_not_repeated(store, sched, dl, mk, who):
+    it = mk("agent-a", "Release", due_at="2026-03-10T10:00:00Z")
+    store.clock.set(store.clock.now().replace(hour=10, minute=0))
+    sched.run_pass()  # the nudge at 10:00
+    assert _steps(store, 1) == [(0, "nudge", 0)]
+    _lapse_at_13_10(store, sched, dl, who, it, started="10:10")
+    store.clock.advance(minutes=30)
+    sched.run_pass()
+    assert len(_steps(store, 1)) == 1  # no second nudge; escalate is due at 14:10
+    store.clock.advance(minutes=30)
+    sched.run_pass()
+    assert [a for _, a, _ in _steps(store, 1)] == ["nudge", "escalate", "flag"]
+
+
+def test_an_update_after_the_lapse_stops_it_again(store, sched, dl, mk, who):
+    it = mk("agent-a", "Release", due_at="2026-03-10T10:00:00Z",
+            overdue=[{"after": "0m", "action": "nudge"}, {"after": "5h", "action": "escalate"}])
+    _lapse_at_13_10(store, sched, dl, who, it)
+    sched.run_pass()  # 13:10: the nudge, counted from the lapse
+    assert [a for _, a, _ in _steps(store, 1)] == ["nudge"]
+    store.clock.advance(minutes=5)
+    store.patch_item(who("agent-a"), it["id"], {"note": "on it, new plan tomorrow"})  # attended again
+    store.clock.set(store.clock.now().replace(hour=18, minute=30))  # past 13:10 + 5 h
+    sched.run_pass()
+    assert [a for _, a, _ in _steps(store, 1)] == ["nudge"]

@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import Match, Route
 
 from . import __version__, monitor, schema, views
 from .deliveries import Deliveries
@@ -212,6 +212,13 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         got = await deliveries.long_poll(caller, wait, limit, call)
         return JSONResponse({"deliveries": got, "lease_seconds": store.settings.lease_seconds})
 
+    async def my_messages(request: Request):
+        caller = caller_of(request)
+        _need(caller, READERS)
+        q = _query(request, {"since", "limit"})
+        got = await call(deliveries.mine, caller, _ts(q, "since"), _int(q, "limit", 20, 1, 100))
+        return JSONResponse({"messages": got})
+
     async def ack_delivery(request: Request):
         caller = caller_of(request)
         _need(caller, ("deliverer",))
@@ -268,6 +275,7 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         Route("/v1/tracks/{id}", put_track, methods=["PUT"]),
         Route("/v1/views/timeline", view_timeline, methods=["GET"]),
         Route("/v1/views/for/{human}", view_for, methods=["GET"]),
+        Route("/v1/messages", my_messages, methods=["GET"]),
         Route("/v1/deliveries", get_deliveries, methods=["GET"]),
         Route("/v1/deliveries/{id}/ack", ack_delivery, methods=["POST"]),
         Route("/v1/events", events, methods=["GET"]),
@@ -282,7 +290,16 @@ def create_app(store: Store, scheduler=None) -> "ErrorGuard":
         return error_response(err)
 
     async def on_http_error(request: Request, exc):
-        if getattr(exc, "status_code", 500) in (404, 405):
+        status = getattr(exc, "status_code", 500)
+        if status == 405:
+            # every method the path has, not only those of the first route that matched it
+            allowed = sorted({m for r in routes if isinstance(r, Route) and r.matches(request.scope)[0] != Match.NONE
+                              for m in (r.methods or ())})
+            response = error_response(ApiError("method_not_allowed", f"{request.method} is not allowed here; "
+                                                                     f"allowed: {', '.join(allowed)}"))
+            response.headers["Allow"] = ", ".join(allowed)
+            return response
+        if status == 404:
             return error_response(ApiError("not_found", "no such endpoint"))
         return JSONResponse({"error": {"code": "invalid", "message": "bad request"}}, status_code=400)
 

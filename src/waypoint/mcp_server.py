@@ -1,4 +1,4 @@
-"""waypoint-mcp: Waypoint's seven MCP tools, for one agent session, over the HTTP API.
+"""waypoint-mcp: Waypoint's eight MCP tools, for one agent session, over the HTTP API.
 
 The agent's client starts it per session (stdio). Configuration comes from the environment:
 
@@ -24,7 +24,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
-from .present import InputError, answer_line, flat, item_id, line, local, to_answer_at, to_condition, to_ts, to_when
+from .present import InputError, answer_line, flat, item_id, message_line, line, local, to_answer_at, to_condition, to_ts, to_when
 from .schema import limits
 
 INSTRUCTIONS = ("Waypoint keeps your open items, what waits on what, and wakes you at the right time. "
@@ -248,6 +248,18 @@ def build(client: WaypointClient, me: str) -> MCPServer:
             body["due_at"] = to_ts(due)
         asked = api("POST", "/v1/items", body)
         return f"Asked {human}: {asked['id']} {asked['title']}."
+
+    @tool(description="My recent messages from Waypoint in full, newest first: what a short wake-up line only "
+                      "names (an outage summary, an undeliverable message), with what became of each.",
+          structured_output=False)
+    def wp_messages(limit: int = 10, since: str | None = None) -> str:
+        query = {"limit": max(1, min(int(limit), 100))}
+        if since:
+            query["since"] = to_ts(since)
+        msgs = api("GET", "/v1/messages", query=query)["messages"]
+        if not msgs:
+            return f"No messages for {me}."
+        return "\n".join([f"Messages for {me}, newest first:"] + [message_line(m) for m in msgs])
 
     return server
 

@@ -112,20 +112,32 @@ class Scheduler:
 
     # ------------------------------------------------------------------ the overdue ladder
     @staticmethod
-    def _ladder_clock(c, num: int, due_at: str) -> tuple[datetime, bool]:
-        """When this item's ladder starts, and whether its owner has attended to it since.
+    def _ladder_clock(c, num: int, due_at: str) -> tuple[datetime, bool, datetime | None]:
+        """When this item's ladder starts, whether its owner has attended to it since, and when a
+        lapsed running lease re-armed it (None if none did).
 
         The ladder starts at max(due time, when that due time was set, by anyone), so an item
         created or re-dated with a due time already past starts at its first step. It is attended
         when the item's owner (who owned it then) changed it at or after the due time, after the
-        change that set the due time. Updates by a coordinator or a human don't stop the ladder."""
+        change that set the due time. Updates by a coordinator or a human don't stop the ladder.
+        A running lease that lapsed (the owner went silent) re-arms it: only owner changes after
+        the last lapse count as attending, and the steps not taken yet are counted from the lapse
+        (no catch-up of those that fell due while the item ran)."""
         events = Store.client_events(c, num)
         set_id, set_at = 0, due_at
         for e in events:
             if e["event"] == "created" or "due_at" in e["changes"]:
                 set_id, set_at = e["id"], e["at"]
+        lapse = c.execute("SELECT id, at FROM history WHERE item = ? AND by IS NULL AND event = 'derived' "
+                          "AND note LIKE 'running lapsed%' AND id > ? ORDER BY id DESC LIMIT 1",
+                          (num, set_id)).fetchone()
+        since_id = max(set_id, lapse["id"]) if lapse else set_id
+        rearmed = parse_ts(lapse["at"]) if lapse and lapse["at"] >= due_at else None
         start = max(parse_ts(due_at), parse_ts(set_at))
-        return start, any(e["id"] > set_id and e["at"] >= due_at and e["by"] == e["owner"] for e in events)
+        if rearmed is not None:
+            start = max(start, rearmed)
+        attended = any(e["id"] > since_id and e["at"] >= due_at and e["by"] == e["owner"] for e in events)
+        return start, attended, rearmed
 
     def _ladders(self, c, now: datetime, report: PassReport) -> None:
         rows = c.execute(
@@ -133,7 +145,7 @@ class Scheduler:
             "ORDER BY due_at, num", (fmt(now),),
         ).fetchall()
         for row in rows:
-            start, attended = self._ladder_clock(c, row["num"], row["due_at"])
+            start, attended, rearmed = self._ladder_clock(c, row["num"], row["due_at"])
             if attended:
                 continue
             ladder = json.loads(row["overdue"]) or self.store.settings.default_ladder
@@ -160,7 +172,8 @@ class Scheduler:
                 c.execute("INSERT INTO ladder_steps (item, due_at, step, action, target, at, caught_up, skipped) "
                           "VALUES (?,?,?,?,?,?,?,0)", (row["num"], row["due_at"], i, step["action"], step.get("to"),
                                                        fmt(now), int(caught_up)))
-                note = f"{step['action']} (step {i + 1}, {step['after']} after due)"
+                since = "after the lapse" if rearmed is not None and start == rearmed else "after due"
+                note = f"{step['action']} (step {i + 1}, {step['after']} {since})"
                 if caught_up:
                     note += ", caught up"
                 self.store._history(c, row["num"], None, "ladder_step", None, note)

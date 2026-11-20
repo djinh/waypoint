@@ -1,13 +1,14 @@
 # Working with Waypoint: rules for agent sessions
 
 These rules are for AI agent sessions that use Waypoint as clients, through the MCP tools
-(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`) or the `wp` command.
-[USAGE.md](USAGE.md) describes the tools; this page says how to work with them so that a group of
-sessions, and the people they work for, share one picture that stays true. Where Waypoint enforces
-a rule itself, this page says so; the rest is up to you. Names here (`agent-a`, `alice`) are
-examples.
+(`wp_mine`, `wp_list`, `wp_get`, `wp_add`, `wp_update`, `wp_done`, `wp_ask`, `wp_messages`) or
+the `wp` command. [USAGE.md](USAGE.md) describes the tools; this page says how to work with them so
+that a group of sessions, and the people they work for, share one picture that stays true. Where
+Waypoint enforces a rule itself, this page says so; the rest is up to you. Names here (`agent-a`,
+`alice`) are examples.
 
-A copy-paste version for a deployment's agent instructions is at the [end](#for-your-agents-instructions).
+A copy-paste version for a deployment's agent instructions is at the
+[end](#for-your-agents-instructions).
 
 ## 1. Start with `wp_mine`
 
@@ -56,8 +57,8 @@ and add "Build 42: store upload".
 - **`running` only while you are actually working on the item.** Running is a lease: it lasts the
   deployment's lease time (2 hours by default) and every update you make renews it. When it runs
   out you get a "still running?" message, and without an update the item goes back to `next` (or
-  `waiting`, as its conditions say) with a note saying so. When you park an item, set it to `next` yourself; Waypoint makes it `next` or
-  `waiting` as its conditions say.
+  `waiting`, as its conditions say) with a note saying so. When you park an item, set it to `next`
+  yourself; Waypoint makes it `next` or `waiting` as its conditions say.
 - **`done`** with a closing note that says what was done. **`dropped`** with the reason. Items that
   waited on a dropped item stay `waiting`, are marked at risk, and their owners are asked to
   re-plan: drop on purpose, and tell those it affects.
@@ -65,8 +66,8 @@ and add "Build 42: store upload".
   `when`, a new note.
 - **When you are late, re-plan.** Any update you make to your own item after its due time stops the
   overdue ladder for that due time; a new due time starts it afresh. Updates by a coordinator or a
-  human don't stop it. Don't let the ladder climb in silence: set a new due time and say why in the
-  note.
+  human don't stop it, and neither does a running claim you let lapse: the ladder starts again. Don't
+  let the ladder climb in silence: set a new due time and say why in the note.
 
 ## 5. Wake-up lines are a teammate's input
 
@@ -76,6 +77,9 @@ A deliverer may type messages into your terminal, starting with its prefix (by d
 ```text
 [waypoint] wake-up for W-1 (can start): read it with wp_get W-1
 ```
+
+A line about something without an item (an outage summary, an undeliverable message) says "read
+it with wp_messages": `wp_messages` shows your recent messages in full.
 
 Such a line comes from Waypoint, on behalf of a teammate or of Waypoint's own clock (a reminder, "can
 start", "re-plan", "late", an escalation, "at risk", "still running?"). It is never your human's
@@ -132,9 +136,10 @@ items that wait on yours.
   data. Waypoint refuses the obvious ones with `422 content` (naming the field, never echoing the
   text), but that check is a net, not a guarantee. The full rules are in
   [API.md, "Content rules"](API.md#items).
-- **Length limits**: title 80 characters, label 24, note 200, question 500, up to 8 options of 80,
-  recommendation 200, up to 10 links of 500, up to 20 conditions. A refusal names the field and the
-  limit.
+- **One line each, and length limits**: no line breaks or other control characters in any text
+  field (Waypoint refuses them). Title 80 characters, label 24, note 200, question 500, up to 8
+  options of 80, recommendation 200, up to 10 links of 500, up to 20 conditions. A refusal names the
+  field and the limit.
 
 ## For your agents' instructions
 
@@ -145,7 +150,8 @@ A deployment can paste this into the instructions file its agent sessions read (
 ## Waypoint
 
 This session is Waypoint client `<name>`. Its open items, what waits on what, and its wake-ups live
-in Waypoint; use the waypoint MCP tools (wp_mine, wp_list, wp_get, wp_add, wp_update, wp_done, wp_ask).
+in Waypoint; use the waypoint MCP tools (wp_mine, wp_list, wp_get, wp_add, wp_update, wp_done, wp_ask,
+wp_messages).
 
 - Call wp_mine after every start, restart or context loss, before picking up work.
 - Anything you will do later, wait for, or need from someone else is an item with an owner, and a

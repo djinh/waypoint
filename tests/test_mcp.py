@@ -1,4 +1,4 @@
-"""The MCP server: seven short tools, thin over the API, through the SDK's in-process client."""
+"""The MCP server: eight short tools, thin over the API, through the SDK's in-process client."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from mcp import Client
 from waypoint.client import WaypointClient
 from waypoint.mcp_server import build, to_condition, to_ts
 
-TOOLS = {"wp_mine", "wp_list", "wp_get", "wp_add", "wp_update", "wp_done", "wp_ask"}
+TOOLS = {"wp_mine", "wp_list", "wp_get", "wp_add", "wp_update", "wp_done", "wp_ask", "wp_messages"}
 
 
 def call(server, tool, **args):
@@ -29,7 +29,7 @@ def mcp_for(server, tokens, tracks):
     return lambda name: build(WaypointClient(server.base, tokens[name], timeout=10), name)
 
 
-def test_seven_short_tools(mcp_for):
+def test_eight_short_tools(mcp_for):
     async def run():
         async with Client(mcp_for("agent-a")) as c:
             return (await c.list_tools()).tools

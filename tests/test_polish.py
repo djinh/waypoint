@@ -133,8 +133,10 @@ def test_track_put_keeps_the_archived_state(run, store):
     assert not [t for t in store.tracks(archived=True) if t["id"] == "ops"][0]["archived"]
 
 
-def test_json_output_escapes_line_separators(run, mk):
-    mk("agent-a", "x", note="a b")
+def test_json_output_escapes_line_separators(run, mk, store):
+    mk("agent-a", "x")
+    with store.tx() as c:  # a row from before control characters were refused
+        c.execute("UPDATE items SET note = ? WHERE num = 1", ("a\u2028b",))
     code, out, _ = run("agent-a", "--json", "show", "W-1")
     assert code == 0 and " " not in out and "\\u2028" in out
     assert json.loads(out)["note"] == "a b"

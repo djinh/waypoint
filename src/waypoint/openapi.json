@@ -2,7 +2,7 @@
  "openapi": "3.1.0",
  "info": {
   "title": "Waypoint API",
-  "version": "0.1.17",
+  "version": "0.2.2",
   "summary": "Open items, dependencies and wake-ups for a group of agent sessions.",
   "description": "The HTTP API of `waypointd`. Everything else (the MCP server, `wp`, the deliverers) is a client\nof it. The prose that goes with this file is `docs/API.md`; where the two differ, this file is\nthe contract and the prose is a bug.\n\nConventions:\n- JSON in and out, UTF-8. Times are RFC 3339. Waypoint answers in UTC with a `Z` suffix; input\n  must carry a zone (`Z` or an offset) and is converted to UTC. A day (`when` with precision\n  `day`) is a plain date, `YYYY-MM-DD`, in the deployment's time zone.\n- Every request but `GET /v1/health` carries `Authorization: Bearer <token>`.\n- Unknown fields in a request body are refused (`invalid`), never stored.\n- Absent fields in a response are never used for \"unknown\": a field without a value is `null`\n  or an empty list.\n",
   "license": {
@@ -656,6 +656,56 @@
     }
    }
   },
+  "/v1/messages": {
+   "get": {
+    "tags": [
+     "deliveries"
+    ],
+    "summary": "My own messages, in full, newest first.",
+    "description": "Every message Waypoint sent the caller (the recipient), with its full text and what became of\nit. A recipient whose deliverer only types a short line (\"ref\" mode) reads the details here,\ne.g. of an outage summary. Not for deliverers, which read their queue at /v1/deliveries.\n",
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "description": "Only messages that fell due at or after this time.",
+      "schema": {
+       "$ref": "#/components/schemas/Timestamp"
+      }
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 100,
+       "default": 20
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The caller's messages, newest `fell_due_at` first.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MessageList"
+        }
+       }
+      }
+     },
+     "400": {
+      "$ref": "#/components/responses/Invalid"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     }
+    }
+   }
+  },
   "/v1/deliveries/{id}/ack": {
    "parameters": [
     {
@@ -1138,19 +1188,22 @@
     "type": "string",
     "minLength": 1,
     "maxLength": 80,
-    "description": "One line, readable without context."
+    "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
+    "description": "One line, readable without context. No line breaks or other control characters in a request; text stored before 0.2 may still hold them in answers."
    },
    "Label": {
     "type": "string",
     "minLength": 1,
     "maxLength": 24,
-    "description": "Short form of the title for tight places (timeline stops)."
+    "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
+    "description": "Short form of the title for tight places (timeline stops). No line breaks or other control characters in a request; text stored before 0.2 may still hold them in answers."
    },
    "Note": {
     "type": "string",
     "minLength": 1,
     "maxLength": 200,
-    "description": "One line."
+    "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
+    "description": "One line. No line breaks or other control characters in a request; text stored before 0.2 may still hold them in answers."
    },
    "ConditionInput": {
     "description": "Another item, or a time.",
@@ -1253,6 +1306,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
+      "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
       "description": "What the human is asked."
      },
      "options": {
@@ -1261,7 +1315,8 @@
       "items": {
        "type": "string",
        "minLength": 1,
-       "maxLength": 80
+       "maxLength": 80,
+       "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
       },
       "default": []
      },
@@ -1270,7 +1325,8 @@
        {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
        },
        {
         "type": "null"
@@ -1468,7 +1524,8 @@
        {
         "type": "string",
         "minLength": 1,
-        "maxLength": 40
+        "maxLength": 40,
+        "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
        },
        {
         "type": "null"
@@ -2445,6 +2502,87 @@
      }
     }
    },
+   "MessageList": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "messages"
+    ],
+    "properties": {
+     "messages": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/Message"
+      }
+     }
+    }
+   },
+   "Message": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "kind",
+     "item",
+     "items",
+     "fell_due_at",
+     "text",
+     "state",
+     "settled_at"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/DeliveryId"
+     },
+     "kind": {
+      "$ref": "#/components/schemas/Delivery/properties/kind"
+     },
+     "item": {
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/ItemId"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "items": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/ItemId"
+      }
+     },
+     "fell_due_at": {
+      "$ref": "#/components/schemas/Timestamp"
+     },
+     "text": {
+      "type": "string",
+      "maxLength": 1000
+     },
+     "state": {
+      "type": "string",
+      "enum": [
+       "pending",
+       "delivered",
+       "undeliverable",
+       "withdrawn"
+      ],
+      "description": "`pending`: not confirmed yet; the others as its deliverer confirmed it, or withdrawn by Waypoint."
+     },
+     "settled_at": {
+      "description": "When it was confirmed or withdrawn; `null` while pending.",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/Timestamp"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   },
    "Delivery": {
     "type": "object",
     "additionalProperties": false,
@@ -2744,7 +2882,8 @@
      "label": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 40
+      "maxLength": 40,
+      "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
      },
      "deliverer": {
       "$ref": "#/components/schemas/ClientName"
@@ -2761,7 +2900,8 @@
        {
         "type": "string",
         "minLength": 1,
-        "maxLength": 40
+        "maxLength": 40,
+        "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$"
        },
        {
         "type": "null"
@@ -2840,7 +2980,8 @@
      "stuck_deliveries",
      "late_items",
      "unknown_owners",
-     "running_stale"
+     "running_stale",
+     "coordinator"
     ],
     "properties": {
      "generated_at": {
@@ -2983,6 +3124,37 @@
       "items": {
        "$ref": "#/components/schemas/StatusItem"
       }
+     },
+     "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "name",
+       "live",
+       "routed"
+      ],
+      "description": "Who hears about escalations, undeliverable messages and outages: the configured\ncoordinator, or the first live one. `ok` is false without a live one.\n",
+      "properties": {
+       "name": {
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/ClientName"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "live": {
+        "type": "boolean",
+        "description": "A registered",
+        "unretired client with role coordinator.": null
+       },
+       "routed": {
+        "type": "boolean",
+        "description": "A deliverer reaches it."
+       }
+      }
      }
     }
    },
@@ -3025,6 +3197,7 @@
          "unauthorized",
          "forbidden",
          "not_found",
+         "method_not_allowed",
          "loop",
          "version_conflict",
          "content",

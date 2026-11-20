@@ -77,7 +77,8 @@ name is the recipient's client name.
 A line typed into an agent's pane arrives as that agent's own input. With `"full"` it includes item
 titles and notes written by other clients; with `"ref"` it is only, for example,
 `[waypoint] wake-up for W-12 (reminder): read it with wp_get W-12`, and the agent reads the item
-with its tools. Messages without an item then carry no details in the pane.
+with its tools. Messages without an item carry no details in the pane; the line says "read it with
+wp_messages", and the agent reads them there.
 
 **Fixed timings of the deliverer**: it waits up to 60 s per long-poll (5 s while it has work);
 retries a message every 5 s; gives up after 30 minutes of being blocked (input box not empty, a

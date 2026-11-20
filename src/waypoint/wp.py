@@ -29,8 +29,8 @@ import sys
 
 from . import __version__
 from .client import ApiFailure, Unavailable, WaypointClient, read_token
-from .present import (InputError, answer_line, client_name, flat, item_id, line, local, to_condition,
-                      to_ts, to_when)
+from .present import (InputError, answer_line, client_name, flat, item_id, line, local, message_line,
+                      to_condition, to_ts, to_when)
 from .schema import limits
 from .server import issue_token
 
@@ -123,6 +123,10 @@ def parser() -> argparse.ArgumentParser:
     ask_where.add_argument("--answer-issue", metavar="URL",
                            help="answered as a comment on this issue or PR (needed if --link names one)")
     ask_where.add_argument("--answer-session", metavar="NAME", help="answered in this session (client name)")
+
+    msgs = sub.add_parser("messages", help="my recent messages from Waypoint, in full, newest first")
+    msgs.add_argument("--limit", type=int, default=10)
+    msgs.add_argument("--since", help="a time; local if no zone")
 
     sub.add_parser("tracks", help="list tracks")
     tr = sub.add_parser("track", help="create or replace a track").add_subparsers(dest="action", required=True)
@@ -308,6 +312,12 @@ def run(args, out, err=None) -> int:
                 body["due_at"] = to_ts(args.due)
             asked = api("POST", "/v1/items", body)
             show(asked, line(asked))
+    elif args.cmd == "messages":
+        query = {"limit": args.limit}
+        if args.since:
+            query["since"] = to_ts(args.since)
+        got = api("GET", "/v1/messages", query=query)
+        show(got, "\n".join(message_line(m) for m in got["messages"]) or "No messages.")
     elif args.cmd == "tracks":
         got = api("GET", "/v1/tracks", query={"archived": "true"})
         show(got, "\n".join(f"{t['id']}: {t['title']} (lead {t['lead'] or '-'})" + (" [archived]" if t["archived"] else "")
