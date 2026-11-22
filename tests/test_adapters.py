@@ -498,8 +498,9 @@ def test_a_line_that_stays_in_the_box_is_reported_not_delivered():
     fake = FakeTmux([idle, idle, stuck, stuck])
     got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
     assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
-    # never more than one extra Enter; the clear is tried, the box didn't empty, nothing more is sent
-    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+    # never more than one extra Enter; the clear is tried once per box line and once more (the box
+    # never changed), then nothing more is sent
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u", "C-u", "C-u"]
 
 
 def test_a_clear_that_doesnt_empty_the_box_stops_there(caplog):
@@ -508,7 +509,7 @@ def test_a_clear_that_doesnt_empty_the_box_stops_there(caplog):
     fake = FakeTmux([idle, idle, stuck])
     got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
     assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
-    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u", "C-u"]
     assert "left alone" in caplog.text
 
 
@@ -570,7 +571,7 @@ def stuck_box(line: str) -> str:
 
 def test_a_line_not_taken_after_two_enters_is_cleared_and_tried_again(caplog):
     idle = status_pane(IDLE_STATUS[0])
-    fake = FakeTmux([idle, idle, *[stuck_box(TYPED_LINE)] * (2 * LOOKS), idle])
+    fake = FakeTmux([idle, idle, *[stuck_box(TYPED_LINE)] * (2 * LOOKS + 1), idle])
     adapter = TmuxAdapter("main", run=fake)
     assert adapter.deliver(DELIVERY) == CLEARED  # nothing left behind; typed again after a minute
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
@@ -623,7 +624,7 @@ def test_repeats_for_one_message_are_logged_first_and_last(caplog):
     stuck = stuck_box(TYPED_LINE)
     adapter = TmuxAdapter("main", run=FakeTmux([idle]))
     for _ in range(3):
-        adapter._run = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS), idle])
+        adapter._run = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS + 1), idle])
         assert adapter.deliver(DELIVERY) == CLEARED
     assert caplog.text.count("pressing Enter once more") == 1
     assert caplog.text.count("cleared D-7's line") == 1
@@ -707,7 +708,8 @@ def test_the_watch_looks_every_settle_for_the_watch_time():
     idle = status_pane(IDLE_STATUS[0])
     fake = FakeTmux([idle, idle, stuck_box(TYPED_LINE)])
     TmuxAdapter("main", run=fake, settle=1.0, watch=8.0, sleep=waits.append).deliver(DELIVERY)
-    assert waits == [1.0] * 17  # one look until the line shows, two whole watches before the clear
+    # one look until the line shows, two whole watches, and a look after each C-u (one box line: two)
+    assert waits == [1.0] * 19
 
 
 @pytest.mark.parametrize("modes, keys", [
@@ -774,7 +776,7 @@ def test_a_long_line_shown_as_pasted_text_is_ours(placeholder):
     fake = FakeTmux([idle], shows=placeholder)
     assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
     stuck = stuck_box(placeholder)
-    fake = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS), idle], shows=placeholder)
+    fake = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS + 1), idle], shows=placeholder)
     assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == CLEARED
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
 
@@ -859,3 +861,53 @@ def test_a_box_that_never_shows_more_than_the_start_is_like_never_shown():
     got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
     assert isinstance(got, Undeliverable) and got.reason == "typed, but it didn't show in the box"
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE]
+
+
+# ---------------------------------------------------------------------- clearing a wrapped line
+
+def test_a_wrapped_line_is_cleared_one_screen_line_at_a_time():
+    """Claude Code's C-u deletes back to the start of a screen line only: a line wrapped over three
+    takes three (seen with a 300-character CJK line)."""
+    idle = status_pane(IDLE_STATUS[0])
+    three = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:\n  W-1 (soak)\n  next line")
+    two = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:\n  W-1 (soak)")
+    one = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:")
+    fake = FakeTmux([idle, idle, *[three] * (2 * LOOKS), three, two, one, idle])
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == CLEARED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u", "C-u", "C-u"]
+
+
+def test_the_clear_stops_at_text_that_isnt_ours(caplog):
+    idle = status_pane(IDLE_STATUS[0])
+    three = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:\n  W-1 (soak)\n  next line")
+    other = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder: please wait")
+    fake = FakeTmux([idle, idle, *[three] * (2 * LOOKS), three, other])
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+    assert "left alone" in caplog.text
+
+
+def test_the_clear_sends_no_key_into_a_mode():
+    idle = status_pane(IDLE_STATUS[0])
+    three = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:\n  W-1 (soak)\n  next line")
+    two = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder:\n  W-1 (soak)")
+    # modes: two looks before typing, before the first Enter, after each watch; then scrolled back
+    fake = FakeTmux([idle, idle, *[three] * (2 * LOOKS), three, two], modes=["0"] * 5 + ["1"])
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+
+
+def test_the_clear_sends_nothing_unless_the_box_holds_exactly_our_line(caplog):
+    """Right before the first C-u the box is looked at once more: someone's text there (also after
+    our line was taken late) is never cleared, not even by the first C-u."""
+    idle = status_pane(IDLE_STATUS[0])
+    stuck = stuck_box(TYPED_LINE)
+    for before in (status_pane(IDLE_STATUS[0], box="❯ a person's question"),
+                   status_pane(IDLE_STATUS[0], box=f"❯ {TYPED_LINE} and more"),
+                   idle):
+        fake = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS), before])
+        got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+        assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+        assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter"]  # no C-u

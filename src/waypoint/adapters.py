@@ -391,15 +391,40 @@ class TmuxAdapter:
                 log.warning("pane %s: %s's line wasn't taken; pressing Enter once more", self.target, name)
         # still exactly our line, typed by this attempt, idle for two whole watches: clear it
         why = f"{name}'s line after two Enters; trying again in a minute"
-        code, _ = self._tmux("send-keys", "-t", self.target, "C-u")
-        cap = self.capture() if code == 0 else None
-        if cap is None or not input_is_empty(cap):
+        if not self._clear(ours):
             log.warning("pane %s: tried to clear %s, but the box isn't empty; left alone", self.target, why)
             return Undeliverable("typed, but not submitted")
         if first:
             log.warning("pane %s: cleared %s", self.target, why)
         self._not_taken[delivery_id] = self._not_taken.get(delivery_id, 0) + 1
         return CLEARED  # nothing left behind; typed again, but not for a while
+
+    def _clear(self, ours: str) -> bool:
+        """Clear our own line from the box; True once the box is empty. Claude Code's C-u deletes only
+        back to the start of a screen line, so a wrapped line takes one per line: send C-u again
+        while what is left is the start of our line, at most once per box line and one more. Stop at
+        anything else (someone's text), a pane that can't be read, or a mode. Nothing at all is sent
+        unless the box holds exactly our line right before the first C-u."""
+        cap = self.capture()
+        box = input_box(cap) if cap is not None else None
+        if box is None or _squash(box_text(cap) or "") != ours:
+            return False  # not (only) our line any more: a person's text is never cleared
+        for i in range(len(box) + 1):
+            if i and self._in_mode():
+                return False
+            code, _ = self._tmux("send-keys", "-t", self.target, "C-u")
+            if code != 0:
+                return False
+            self._sleep(self.settle)
+            cap = self.capture()
+            if cap is None:
+                return False
+            if input_is_empty(cap):
+                return True
+            text = box_text(cap)
+            if not text or not ours.startswith(_squash(text)):
+                return False
+        return False
 
 
 # ---------------------------------------------------------------------- HTTP adapters

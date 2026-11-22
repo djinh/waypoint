@@ -14,7 +14,11 @@ from waypoint.events import Broadcaster
 
 
 class Stream:
-    """Reads an event stream in a thread; events() returns what arrived so far as parsed dicts."""
+    """Reads an event stream in a thread; events() returns what arrived so far as parsed dicts.
+
+    Opening waits for the stream's ": connected" line: the server subscribes the client only once
+    the body starts, after the headers, so a change made between the two would not be sent. On a
+    loaded machine that gap made the first event of a test go missing now and then."""
 
     def __init__(self, base: str, token: str | None, last_id: str | None = None):
         u = urlsplit(base)
@@ -26,8 +30,10 @@ class Stream:
         self.resp = self.conn.getresponse()
         self.q: queue.Queue = queue.Queue()
         self.comments: list[str] = []
+        self.connected = threading.Event()
         if self.resp.status == 200:
             threading.Thread(target=self._read, daemon=True).start()
+            assert self.connected.wait(timeout=10), "no ': connected' line"
 
     def _read(self):
         ev = {}
@@ -36,6 +42,8 @@ class Stream:
                 line = raw.decode().rstrip("\n")
                 if line.startswith(":"):
                     self.comments.append(line)
+                    if line == ": connected":
+                        self.connected.set()
                 elif line == "":
                     if ev:
                         self.q.put(ev)

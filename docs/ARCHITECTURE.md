@@ -176,12 +176,15 @@ taken only on evidence: the box is empty, the line waits above the box as a queu
 was typed, so the turn is ours). A pane that can't be read or a box with other text is no evidence;
 if the watch ends that way the message is reported "typed, but not confirmed" and nothing more is
 sent. Only if the box still holds exactly what it showed before `Enter`, in an idle pane, for the
-whole watch does it send `Enter` once more and watch again; if the line is still there, it clears it (`C-u`, then checks
-the box is empty) and tries the message again after at least a minute (so a pane where Enter keeps
+whole watch does it send `Enter` once more and watch again; if the line is still there, it clears it (`C-u`, which in
+Claude Code deletes back to the start of a screen line only, so it is sent again while what is
+left is the start of the line, at most once per box line and once more, with a look after each;
+it stops at anything else, and sends nothing unless a look right before the first `C-u` shows exactly
+the line) and tries the message again after at least a minute (so a pane where Enter keeps
 failing isn't retyped every few seconds), so its own text doesn't block the pane. Only the attempt
 that typed a line may clear it, and only then: a line left by an earlier attempt, by an earlier
 deliverer process or recalled with the Up arrow blocks the box like anyone's text. Before the first
-`Enter`, the second and the `C-u` it asks again whether the pane is in a
+`Enter`, the second and each `C-u` after the first it asks again whether the pane is in a
 mode (the watch can't see copy mode); if it is, nothing more is sent and the message is reported
 "typed, but not submitted". Our line with
 someone's text after it gets no `Enter` and is reported "typed, but not submitted". The first such
