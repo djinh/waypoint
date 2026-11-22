@@ -14,6 +14,7 @@ import math
 import re
 import subprocess
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -50,6 +51,14 @@ _BUSY = re.compile(r"^\s*\S\s+\S+…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b|esc to i
 _QUEUED = re.compile(r"^\s*⎿\s+Queued\b")
 # C0 and C1 control characters and DEL; a message must never act as keys
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+# Characters that show as nothing: zero-width spaces and joiners, direction marks, the byte order
+# mark, tag characters (Unicode category Cf), variation selectors and the invisible fillers. Claude
+# Code removes them from the input box itself ("Removed 2 invisible characters"), so a typed line
+# holding one never matches what the box shows, and it would hide text from the reader anyway.
+_INVISIBLE_EXTRA = re.compile("[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0"
+                              "\U000e0100-\U000e01ef]")
+# How Claude Code shows a long typed line in its box: "[Pasted text #2]" or "[Pasted text #2 +3 lines]"
+_PASTED = re.compile(r"^\[Pasted text #\d+(?: \+\d+ lines?)?\]$")
 
 
 def input_box(capture: str) -> list[str] | None:
@@ -122,9 +131,19 @@ def input_is_empty(capture: str) -> bool:
     return text.replace(" ", " ").strip() == ""
 
 
+def visible(text: str) -> str:
+    """The text without characters that show as nothing (see _INVISIBLE_EXTRA); other spaces than
+    the plain one become plain spaces."""
+    text = "".join("" if unicodedata.category(ch) == "Cf" else " " if unicodedata.category(ch) == "Zs" else ch
+                   for ch in text)
+    return _INVISIBLE_EXTRA.sub("", text)
+
+
 def one_line(text: str, limit: int = 2000) -> str:
-    """The message as literal text on one line: control characters and newlines become spaces."""
-    flat = _CONTROL.sub(" ", text)
+    """The message as literal, visible text on one line: control characters and newlines become
+    spaces, characters that show as nothing are left out, and the text is composed (NFC), as the box
+    shows it: an "e" with a separate combining accent is shown, and must be typed, as one "é"."""
+    flat = unicodedata.normalize("NFC", visible(_CONTROL.sub(" ", text)))
     return re.sub(r" {2,}", " ", flat).strip()[:limit]
 
 
@@ -181,16 +200,22 @@ class TmuxAdapter:
     # how long to watch a pane after Enter before calling the line not taken: a loaded machine can
     # redraw a pane seconds after the session took the line
     DEFAULT_WATCH = 8.0
+    # after a typed line that never showed in the box: type nothing more into the pane for this long,
+    # so a session that reads it late doesn't get the next line added to it
+    HOLD = 120.0
 
     def __init__(self, target: str, socket: str | None = None, prefix: str = "[waypoint] ",
                  tmux: str = "tmux", run=None, timeout: float = 5, message: str = "full",
-                 settle: float | None = None, watch: float | None = None, sleep=time.sleep):
+                 settle: float | None = None, watch: float | None = None, sleep=time.sleep,
+                 clock=time.monotonic):
         if message not in MESSAGE_MODES:
             raise ValueError("message must be full or ref")
         # seconds between looks at the pane after Enter, and how long to keep looking
         self.settle = self.DEFAULT_SETTLE if settle is None else settle
         self.watch = self.DEFAULT_WATCH if watch is None else watch
         self._sleep = sleep
+        self._clock = clock
+        self._hold_until = 0.0
         self.target = target
         self.socket = socket
         self.prefix = prefix
@@ -226,7 +251,10 @@ class TmuxAdapter:
         typed keys go to the mode), anything in the input box or no box (RETRY), or a turn running
         (BUSY: a line typed then can lose its Enter, and the session would only read it at the
         end of the turn anyway). Whatever the box holds is never touched, also a line an earlier
-        attempt typed: only the attempt that typed a line may clear it."""
+        attempt typed: only the attempt that typed a line may clear it. After a line of ours that
+        never showed, nothing is typed for HOLD seconds."""
+        if self._clock() < self._hold_until:
+            return RETRY
         if self._in_mode():
             return RETRY
         cap = self.capture()
@@ -264,38 +292,84 @@ class TmuxAdapter:
         code, _ = self._tmux("send-keys", "-t", self.target, "-l", "--", text)
         if code != 0:
             return RETRY
-        return self._submit(text, delivery.get("id", ""))
+        name = delivery.get("id", "") or "a message"
+        shown = self._shown(_squash(text))
+        if shown is None:
+            # never an Enter on a line we haven't seen: the session may not have read it yet, and an
+            # Enter that arrives with the text can end up in the box as a line break
+            log.warning("pane %s: %s's line didn't show in the box; no Enter, nothing typed for %d s",
+                        self.target, name, self.HOLD)
+            self._hold_until = self._clock() + self.HOLD
+            return Undeliverable("typed, but it didn't show in the box")
+        if shown == "":
+            log.warning("pane %s: other text showed in the box with %s's line; no Enter", self.target, name)
+            return Undeliverable("typed, but not submitted")
+        return self._submit(shown, delivery.get("id", ""))
+
+    def _looks(self) -> int:
+        return max(1, math.ceil(self.watch / self.settle)) if self.settle > 0 else max(1, int(self.watch))
+
+    def _shown(self, ours: str) -> str | None:
+        """After typing: look every `settle` seconds, for up to `watch` seconds, until the box shows
+        our line. Returns what the box shows (without whitespace): our line, or Claude Code's
+        "[Pasted text #n]" for a long one (the box was empty right before we typed). "" if the box
+        shows other text (someone typed too), None if it never showed all of our line."""
+        for look in range(self._looks()):
+            self._sleep(self.settle)
+            cap = self.capture()
+            now = box_text(cap) if cap is not None else None
+            if not now:
+                continue  # not drawn yet, or no box for a moment
+            if _squash(now) == ours or _PASTED.match(now):
+                return _squash(now)
+            if ours.startswith(_squash(now)):
+                continue  # only the start of our line is drawn so far
+            return ""
+        return None
 
     def _watch(self, ours: str) -> str:
         """After an Enter: look at the pane every `settle` seconds for up to `watch` seconds.
 
-        "taken" as soon as the box no longer starts with our line, our line waits above the box as
-        a queued message, or the pane is busy (it was idle when we typed, so the turn is ours);
-        "added" when the box holds our line with someone's text after it; "stuck" when the box
-        still holds exactly our line, in an idle pane, at the end."""
-        looks = max(1, math.ceil(self.watch / self.settle)) if self.settle > 0 else max(1, int(self.watch))
-        for look in range(looks):
+        `ours` is what the box showed before Enter. Taken only on evidence that the session has the
+        line: the box is empty, our line waits above the box as a queued message, or the pane is busy
+        and the box no longer holds our line (it was idle when we typed, so the turn is ours). A
+        pane that can't be read, or a box that shows something else, is no evidence: keep looking.
+        "taken"; "added" when the box holds our line with someone's text after it; "stuck" when the
+        box still holds exactly our line, in an idle pane, at the end; "unsure" when it ends with no
+        evidence either way."""
+        last = "unsure"
+        for look in range(self._looks()):
             self._sleep(self.settle)
             cap = self.capture()
             if cap is None:
-                return "taken"  # the pane is gone or changed beyond a box: nothing of ours is left there
-            now = _squash(box_text(cap) or "")
-            if not now.startswith(ours) or queued(cap, ours) or pane_busy(cap):
+                last = "unsure"
+                continue
+            text = box_text(cap)
+            now = _squash(text) if text is not None else None
+            if input_is_empty(cap) or queued(cap, ours) or (pane_busy(cap) and now != ours):
                 return "taken"
-            if now != ours:
+            if now == ours:
+                # still our line: in a busy pane the turn isn't ours, and no second Enter goes there
+                last = "unsure" if pane_busy(cap) else "stuck"
+            elif now is not None and now.startswith(ours):
                 return "added"
-        return "stuck"
+            else:
+                last = "unsure"
+        return last
 
-    def _submit(self, text: str, delivery_id: str = ""):
-        """Enter, then make sure it took (see _watch). Only if the box still holds exactly our line in
-        an idle pane after the whole watch: Enter once more and watch again. If it is still stuck,
-        clear it (this attempt typed it, and nothing was added) and try again in a minute; if our
-        line got text added, report "typed, but not submitted" and never press Enter on it.
-        Before each of those keys the pane must not be in a mode (the watch can't see one): if it is,
-        nothing more is sent. Lines are compared without whitespace, because Claude Code wraps long input."""
-        ours = _squash(text)
+    def _submit(self, ours: str, delivery_id: str = ""):
+        """Enter, then make sure it took (see _watch). `ours` is what the box showed, without
+        whitespace (Claude Code wraps long input). Only if the box still holds exactly that in an
+        idle pane after the whole watch: Enter once more and watch again. If it is still stuck, clear
+        it (this attempt typed it, and nothing was added) and try again in a minute; if our line got
+        text added, or the watch saw no evidence either way, report "typed, but not submitted" and
+        press nothing more. Before each of those keys the pane must not be in a mode (the watch can't
+        see one): if it is, nothing more is sent."""
         name = delivery_id or "a message"
         first = delivery_id not in self._not_taken
+        if self._in_mode():
+            log.warning("pane %s: %s's line is typed, but the pane is in a mode; left alone", self.target, name)
+            return Undeliverable("typed, but not submitted")
         for attempt in range(2):
             code, _ = self._tmux("send-keys", "-t", self.target, "Enter")
             if code != 0:
@@ -305,6 +379,9 @@ class TmuxAdapter:
                 return DELIVERED
             if seen == "added":
                 return Undeliverable("typed, but not submitted")  # never press Enter on someone's text
+            if seen == "unsure":
+                log.warning("pane %s: no sign that %s's line was taken; reported, not retyped", self.target, name)
+                return Undeliverable("typed, but not confirmed")
             if self._in_mode():
                 # someone is scrolling back (or tmux can't say): never a key into a mode; our line stays
                 log.warning("pane %s: %s's line wasn't taken, and the pane is in a mode; left alone",

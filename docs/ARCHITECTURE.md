@@ -161,17 +161,27 @@ right before typing. Before each look it also asks tmux whether the pane is in a
 the message would be lost. It also waits while a turn is running (Claude Code's status line above
 the box reads "<verb>… (elapsed"): a line typed then can be taken as a paste and lose its Enter, and
 the session would only read it at the end of the turn anyway. It sends the message as literal text (`send-keys -l --`, control characters and
-newlines replaced by spaces; a trailing `;`, which tmux would read as a command separator, gets a
-space after it) and then a separate `Enter`. Then it watches the pane, looking every second for up
-to 8 seconds (a loaded machine can redraw a pane seconds after the session took the line). The line
-counts as taken as soon as the box no longer starts with it, it waits above the box as a queued
-message ("⎿  Queued"), or the pane turns busy (it was idle when the line was typed, so the turn is
-ours). Only if the box still holds exactly the typed line in an idle pane for the whole watch does it
-send `Enter` once more and watch again; if the line is still there, it clears it (`C-u`, then checks
+newlines replaced by spaces, characters that show as nothing such as zero-width spaces, direction
+marks and variation selectors left out, and composed (NFC) as the box shows it; a trailing `;`, which tmux would read as a command
+separator, gets a space after it). Then it looks every second, for up to 8 seconds, until the box
+shows the line (or Claude Code's `[Pasted text #n]`, how it shows a long line; a box that shows only
+the start of the line is waited for), and only then sends
+a separate `Enter`. A line that never shows gets no `Enter` and is reported "typed, but it didn't
+show in the box", and nothing more is typed into that pane for 2 minutes (`TmuxAdapter.HOLD`), so a
+session that reads it late doesn't get the next message added to it; other text in the box with it
+gets no `Enter` either. After `Enter` it watches the pane, looking every second for up to 8 seconds
+(a loaded machine can redraw a pane seconds after the session took the line). The line counts as
+taken only on evidence: the box is empty, the line waits above the box as a queued message
+("⎿  Queued"), or the pane turns busy with the line gone from the box (it was idle when the line
+was typed, so the turn is ours). A pane that can't be read or a box with other text is no evidence;
+if the watch ends that way the message is reported "typed, but not confirmed" and nothing more is
+sent. Only if the box still holds exactly what it showed before `Enter`, in an idle pane, for the
+whole watch does it send `Enter` once more and watch again; if the line is still there, it clears it (`C-u`, then checks
 the box is empty) and tries the message again after at least a minute (so a pane where Enter keeps
 failing isn't retyped every few seconds), so its own text doesn't block the pane. Only the attempt
 that typed a line may clear it, and only then: a line left by an earlier attempt, by an earlier
-deliverer process or recalled with the Up arrow blocks the box like anyone's text. Before that second `Enter` and before the `C-u` it asks again whether the pane is in a
+deliverer process or recalled with the Up arrow blocks the box like anyone's text. Before the first
+`Enter`, the second and the `C-u` it asks again whether the pane is in a
 mode (the watch can't see copy mode); if it is, nothing more is sent and the message is reported
 "typed, but not submitted". Our line with
 someone's text after it gets no `Enter` and is reported "typed, but not submitted". The first such

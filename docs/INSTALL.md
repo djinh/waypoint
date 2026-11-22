@@ -317,11 +317,20 @@ The schedule in Waypoint is only an expectation: keep it in step with the timer.
 doesn't report is late within the window and escalates like any item.
 
 From a cron line, report the job's own exit code after it, so the job never depends on Waypoint and
-a check-in that can't get through shows as a missed run, never as a failed one:
+a check-in that can't get through shows as a missed run, never as a failed one (`wp`'s normal output
+goes to `/dev/null`; an error still reaches cron's mail):
 
 ```sh
-30 3 * * * /usr/local/bin/backup; rc=$?; if [ $rc -eq 0 ]; then WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1; else WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur failed R-1 --note "exit $rc"; fi
+30 3 * * * /usr/local/bin/backup; rc=$?; if [ $rc -eq 0 ]; then WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1 >/dev/null; else WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur failed R-1 --note "exit $rc" >/dev/null; fi
 ```
+
+### Upgrading to 2.0.3
+
+2.0.3 changes only the deliverer's tmux adapter: no migration, no API change. It presses Enter only
+after the input box shows the typed line, and calls a line delivered only when the box is empty
+again, the line is queued, or a turn starts. 2.0.1 and 2.0.2 could log a line delivered while it
+sat unsent in a box that hadn't been redrawn yet. Install the new version and restart each
+deliverer (`waypoint-deliver`); the daemon needn't be restarted.
 
 ### Upgrading to 2.0.1
 

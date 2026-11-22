@@ -83,7 +83,9 @@ wp_messages", and the agent reads them there.
 **Fixed timings of the deliverer**: it waits up to 60 s per long-poll (5 s while it has work);
 retries a message every 5 s; gives up after 30 minutes of being blocked (input box not empty, a
 menu, no pane) or 4 hours of the recipient being busy; waits 60 s after clearing its own line that
-wasn't taken; checks 1 s after Enter that the line was submitted.
+wasn't taken; looks every second for up to 8 s until the box shows a typed line before it presses
+Enter, and again for up to 8 s after Enter until the line is taken; types nothing into a pane for
+2 minutes after a line that never showed.
 
 ## 3. Clients: environment for `waypoint-mcp` and `wp`
 

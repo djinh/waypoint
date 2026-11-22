@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -12,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from waypoint.adapters import (_RULE, DELIVERED, RETRY, PushAdapter, TmuxAdapter, Undeliverable, WebhookAdapter,
+from waypoint.adapters import (_ANSI, _RULE, DELIVERED, RETRY, PushAdapter, TmuxAdapter, Undeliverable, WebhookAdapter,
                                input_box, input_is_empty, one_line)
 
 GREY = "\x1b[38;5;245m"
@@ -62,15 +64,32 @@ def test_one_line_removes_control_characters():
     assert one_line("x" * 3000) == "x" * 2000
 
 
+def with_box(screen: str, text: str) -> str:
+    """The screen with `text` in its input box (what Claude Code shows once it has read typed text)."""
+    lines = screen.splitlines()
+    rules = [i for i, line in enumerate(lines) if _RULE.match(_ANSI.sub("", line))]
+    top, bottom = rules[-2], rules[-1]
+    return "\n".join(lines[:top + 1] + [f"❯\u00a0{text}"] + lines[bottom:])
+
+
 class FakeTmux:
     """Records tmux calls and answers capture-pane from a list of screens, and pane_in_mode from
-    a list of modes."""
+    a list of modes.
 
-    def __init__(self, screens, fail=(), modes=("0",)):
+    Between typing and Enter, the box of the current screen shows the typed text (if `echo` and the
+    box is empty), and the list of screens isn't advanced: the screens are what the pane shows before
+    typing and after each Enter."""
+
+    def __init__(self, screens, fail=(), modes=("0",), echo=True, shows=None, late=0):
         self.screens = list(screens)
         self.modes = list(modes)
         self.calls = []
         self.fail = set(fail)
+        self.echo = echo
+        self.shows = shows  # what the box shows for the typed text, if not the text itself
+        self.late = late  # looks before the typed text shows
+        self.typed = None  # typed, no Enter yet
+        self.last = None
 
     def __call__(self, args):
         self.calls.append(args)
@@ -78,9 +97,19 @@ class FakeTmux:
         if verb in self.fail:
             return 1, ""
         if verb == "capture-pane":
-            return 0, self.screens.pop(0) if len(self.screens) > 1 else self.screens[0]
+            if self.typed is not None:
+                screen = self.last or self.screens[0]
+                if self.late:
+                    self.late -= 1
+                    return 0, screen
+                shown = self.typed if self.shows is None else self.shows
+                return 0, with_box(screen, shown) if self.echo and input_is_empty(screen) else screen
+            self.last = self.screens.pop(0) if len(self.screens) > 1 else self.screens[0]
+            return 0, self.last
         if verb == "display-message":
             return 0, (self.modes.pop(0) if len(self.modes) > 1 else self.modes[0]) + "\n"
+        if verb == "send-keys":
+            self.typed = args[-1] if "-l" in args else None
         return 0, ""
 
     def sent(self):
@@ -151,23 +180,48 @@ def test_tmux_enter_failing_is_reported():
     assert isinstance(result, Undeliverable) and result.reason == "typed, but Enter failed"
 
 
+# A pane that behaves like Claude Code's input box: it reads keys raw, redraws typed text inside the
+# box (after a short delay, as a busy session would), and on Enter moves the line above the box.
+FAKE_PANE = r"""
+import os, sys, termios, time, tty
+tty.setraw(0)
+out, line = [], ""
+def draw():
+    rule = "\u2500" * 60
+    box = line or "\x1b[2mtry the tests\x1b[0m"
+    sys.stdout.write("\x1b[H\x1b[2J" + "".join(o + "\r\n" for o in ["output"] + out[-8:])
+                     + rule + "\r\n\u276f\u00a0" + box + "\r\n" + rule + "\r\n")
+    sys.stdout.flush()
+draw()
+while True:
+    data = os.read(0, 4096).decode("utf-8", "replace")
+    if not data:
+        break
+    time.sleep(0.2)
+    for ch in data:
+        if ch == "\r":
+            out.append("\u276f " + line)
+            line = ""
+        elif ch == "\x15":
+            line = ""
+        elif ch >= " ":
+            line += ch
+    draw()
+"""
+
+
 @pytest.fixture
 def real_pane(tmp_path):
-    """A real tmux server on a socket file in tmp_path, with a pane that draws an empty input box
-    (with a dim suggestion) and then echoes what it gets."""
+    """A real tmux server on a socket file in tmp_path, with a pane that acts like Claude Code's
+    input box (FAKE_PANE)."""
     if shutil.which("tmux") is None:
         pytest.skip("tmux not installed")
     sock = str(tmp_path / "tmux.sock")
-    script = tmp_path / "fake-pane.sh"
-    script.write_text(
-        "printf 'output\\n'\n"
-        f"printf '{'─' * 60}\\n'\n"
-        "printf '❯\\302\\240\\033[2mtry the tests\\033[0m\\n'\n"
-        f"printf '{'─' * 60}\\n'\n"
-        "exec cat\n", encoding="utf-8")
+    script = tmp_path / "fake_pane.py"
+    script.write_text(FAKE_PANE, encoding="utf-8")
     subprocess.run(["tmux", "-S", sock, "-f", "/dev/null", "new-session", "-d", "-s", "t", "-x", "120", "-y", "20",
-                    f"sh {script}"], check=True, timeout=10)
-    adapter = TmuxAdapter("t", socket=sock, settle=0.3)
+                    f"{shlex.quote(sys.executable)} -I {shlex.quote(str(script))}"], check=True, timeout=10)
+    adapter = TmuxAdapter("t", socket=sock, settle=0.3, watch=3)
     for _ in range(50):
         if "try the tests" in (adapter.capture() or ""):
             break
@@ -458,11 +512,14 @@ def test_a_clear_that_doesnt_empty_the_box_stops_there(caplog):
     assert "left alone" in caplog.text
 
 
-def test_someone_elses_text_after_ours_is_not_our_line():
+def test_other_text_in_the_box_after_enter_is_no_sign_of_taken():
+    """The box should be empty once the session took the line. Someone's text there instead is no
+    evidence either way: reported, not called delivered, and nothing more is sent."""
     idle = status_pane(IDLE_STATUS[0])
     other = status_pane(IDLE_STATUS[0], box="❯ something else")
     fake = FakeTmux([idle, idle, other])
-    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not confirmed"
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
 
 
@@ -476,7 +533,7 @@ def test_the_settle_wait_is_used():
     waits = []
     fake = FakeTmux([status_pane(IDLE_STATUS[0])])
     TmuxAdapter("main", run=fake, settle=1.0, sleep=waits.append).deliver(DELIVERY)
-    assert waits == [1.0]
+    assert waits == [1.0, 1.0]  # one look until the line shows, one after Enter
 
 
 def test_busy_with_text_in_the_box_is_busy():
@@ -610,11 +667,20 @@ def test_a_pane_that_redraws_late_is_waited_for(caplog):
 
 
 def test_a_turn_that_starts_after_enter_means_taken():
-    """Idle when typed, busy after Enter: the turn is ours. No second Enter into a busy pane, even if
-    the box isn't redrawn yet."""
+    """Idle when typed, busy after Enter with our line gone from the box: the turn is ours."""
     idle = status_pane(IDLE_STATUS[0])
-    fake = FakeTmux([idle, idle, status_pane(BUSY_STATUS[0], box=f"❯\u00a0{TYPED_LINE}")])
+    fake = FakeTmux([idle, idle, status_pane(BUSY_STATUS[0], box="❯ something typed since")])
     assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+
+
+def test_a_turn_with_our_line_still_in_the_box_is_not_ours():
+    """Claude Code draws the status line and the box in one frame: busy with our line still in the box
+    means some other turn. Not delivered, and no second Enter into a busy pane."""
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle, idle, status_pane(BUSY_STATUS[0], box=f"❯ {TYPED_LINE}")])
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not confirmed"
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
 
 
@@ -641,12 +707,13 @@ def test_the_watch_looks_every_settle_for_the_watch_time():
     idle = status_pane(IDLE_STATUS[0])
     fake = FakeTmux([idle, idle, stuck_box(TYPED_LINE)])
     TmuxAdapter("main", run=fake, settle=1.0, watch=8.0, sleep=waits.append).deliver(DELIVERY)
-    assert waits == [1.0] * 16  # two whole watches before the clear
+    assert waits == [1.0] * 17  # one look until the line shows, two whole watches before the clear
 
 
 @pytest.mark.parametrize("modes, keys", [
-    (["0", "0", "1"], [TYPED_LINE, "Enter"]),                # scrolled back during the first watch
-    (["0", "0", "0", "1"], [TYPED_LINE, "Enter", "Enter"]),  # ...or during the second
+    (["0", "0", "1"], [TYPED_LINE]),                              # scrolled back while it showed
+    (["0", "0", "0", "1"], [TYPED_LINE, "Enter"]),                # ...during the first watch
+    (["0", "0", "0", "0", "1"], [TYPED_LINE, "Enter", "Enter"]),  # ...or during the second
 ])
 def test_no_key_goes_into_a_mode_after_typing(modes, keys, caplog):
     """capture-pane shows the normal screen in copy mode, so the mode is asked again before the
@@ -658,3 +725,137 @@ def test_no_key_goes_into_a_mode_after_typing(modes, keys, caplog):
     assert [a[-1] for a in fake.sent()] == keys  # no Enter and no C-u into the mode
     assert "the pane is in a mode; left alone" in caplog.text
 
+
+
+# ---------------------------------------------------------------------- taken only on evidence
+
+def test_a_line_that_never_shows_gets_no_enter_and_holds_the_pane(caplog):
+    """Two lines were logged delivered while both sat unsent in an idle session's box, the second
+    added after the first. The box hadn't shown them yet, so "the box doesn't start with our line"
+    read as taken. Now: no Enter on a line the box never showed, report it, and type nothing more
+    into that pane for a while."""
+    now = [1000.0]
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle], echo=False)
+    adapter = TmuxAdapter("main", run=fake, clock=lambda: now[0])
+    got = adapter.deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but it didn't show in the box"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE]  # no Enter
+    assert "D-7's line didn't show in the box" in caplog.text and TYPED_LINE not in caplog.text
+    # the next message for that pane: the box still looks empty, but nothing is typed
+    assert adapter.deliver(dict(DELIVERY, id="D-8", text="W-9 is due")) == RETRY
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE]
+    now[0] += TmuxAdapter.HOLD  # the line was lost after all: the pane is free again
+    fake.echo, fake.typed = True, None
+    assert adapter.deliver(dict(DELIVERY, id="D-8", text="W-9 is due")) == DELIVERED
+
+
+def test_a_line_that_shows_late_is_waited_for_before_enter():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle], late=LOOKS - 1)
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+    assert sum(1 for a in fake.calls if "capture-pane" in a) == 2 + LOOKS + 1  # ready, shows, watch
+
+
+def test_other_text_with_ours_before_enter_gets_no_enter():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle], shows=f"{TYPED_LINE} and more")
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE]
+
+
+@pytest.mark.parametrize("placeholder", ["[Pasted text #1]", "[Pasted text #12 +3 lines]"])
+def test_a_long_line_shown_as_pasted_text_is_ours(placeholder):
+    """Claude Code shows a long typed line as "[Pasted text #1]" (seen on 2.1.330 with a 2300-character
+    line). That is our line, before and after Enter."""
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle], shows=placeholder)
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    stuck = stuck_box(placeholder)
+    fake = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS), idle], shows=placeholder)
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == CLEARED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+
+
+def test_an_enter_that_became_a_line_break_gets_one_more():
+    """An Enter that ends up in the box as a line break leaves our line and an empty line: still our
+    line, so after the watch it gets the second Enter, not "taken"."""
+    idle = status_pane(IDLE_STATUS[0])
+    broken = status_pane(IDLE_STATUS[0], box=f"❯ {TYPED_LINE}\n  ")
+    fake = FakeTmux([idle, idle, *[broken] * LOOKS, idle])
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter"]
+
+
+def test_a_pane_that_cant_be_read_after_enter_is_not_taken():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle])
+    real = fake.__call__
+    entered = []
+
+    def run(args):
+        if args[-1] == "Enter":
+            entered.append(1)
+        if entered and "capture-pane" in args:
+            return 1, ""
+        return real(args)
+
+    got = TmuxAdapter("main", run=run).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not confirmed"
+
+
+def test_one_line_leaves_out_invisible_characters():
+    assert one_line("a​b⁠c﻿d‮e\U000e0041f g️ h‍ㅤi") == "abcdef g hi"
+    assert one_line("wake-up for W-1   read it") == "wake-up for W-1 read it"
+
+
+def test_a_line_with_invisible_characters_matches_the_box():
+    """The box never shows invisible characters, so a typed line holding one could never be seen as
+    ours; they are left out before typing."""
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle])
+    assert TmuxAdapter("main", run=fake).deliver(dict(DELIVERY, text="Reminder:​ W-1")) == DELIVERED
+    assert fake.sent()[0][-1] == "[waypoint] Reminder: W-1"
+
+
+def test_one_line_is_composed_as_the_box_shows_it():
+    """The box shows composed text: "e" + a combining accent typed as two characters would never
+    match it, so the line is composed (NFC) before typing."""
+    assert one_line("cafe\u0301 Ame\u0301lie Zu\u0308rich") == "caf\u00e9 Am\u00e9lie Z\u00fcrich"
+    assert one_line("\u1112\u1161\u11ab") == "\ud55c"  # Hangul jamo -> one syllable
+
+
+def test_a_decomposed_line_is_delivered():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle])  # the fake box shows what was typed, already composed
+    assert TmuxAdapter("main", run=fake).deliver(dict(DELIVERY, text="Reminder: cafe\u0301")) == DELIVERED
+    assert fake.sent()[0][-1] == "[waypoint] Reminder: caf\u00e9"
+
+
+def test_a_box_that_shows_the_start_of_our_line_is_waited_for():
+    """A box drawn part way shows only the start of our line: that is not other text."""
+    idle = status_pane(IDLE_STATUS[0])
+    part = with_box(idle, TYPED_LINE[:15])
+    fake = FakeTmux([idle, idle, idle])
+    real = fake.__call__
+    looks = []
+
+    def run(args):
+        if "capture-pane" in args and fake.typed is not None:
+            looks.append(1)
+            if len(looks) <= 2:
+                return 0, part
+        return real(args)
+
+    assert TmuxAdapter("main", run=run).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+
+
+def test_a_box_that_never_shows_more_than_the_start_is_like_never_shown():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle], shows=TYPED_LINE[:15])
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but it didn't show in the box"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE]
