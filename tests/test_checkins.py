@@ -62,6 +62,70 @@ def test_a_checkin_with_nothing_open_is_recorded(store, sched, rec, who):
     assert rec.get("R-1", history=True)["history"][-1]["note"] == "ok with no open occurrence"
 
 
+def test_a_job_that_finishes_on_the_minute_finds_its_occurrence(store, sched, rec, who):
+    """The occurrence of a check-in recurrence is made a few minutes early, so a job that starts at
+    03:00 and reports at 03:00:02 closes it, whatever the pass timing."""
+    at(store, "2026-03-11T02:54:59Z")
+    sched.run_pass()
+    assert rec.get("R-1")["open_occurrence"] is None  # more than 5 minutes early: nothing yet
+    at(store, "2026-03-11T02:55:10Z")
+    assert sched.run_pass().occurrences == 1
+    r = rec.get("R-1")
+    assert r["open_occurrence"] == "W-1" and r["next_at"] == "2026-03-12T03:00:00Z"
+    w = store.get_item("W-1")
+    assert w["occurrence_at"] == "2026-03-11T03:00:00Z" and w["due_at"] == "2026-03-11T04:00:00Z"
+    [m] = store.conn.execute("SELECT fell_due_at, late FROM messages WHERE kind = 'recurring'").fetchall()
+    assert m["fell_due_at"] == "2026-03-11T02:55:10Z" and m["late"] is None  # never dated in the future
+    at(store, "2026-03-11T03:00:02Z")
+    sched.run_pass()
+    assert sched.run_pass().occurrences == 0  # no second one for the same time
+    got = rec.checkin(who("agent-c"), "R-1", {"result": "ok"})
+    assert got["occurrence"]["id"] == "W-1" and got["occurrence"]["state"] == "done"
+    assert status(store)["missed_checkins"] == []
+
+
+def test_the_lead_is_at_most_half_the_gap(store, sched, rec, who):
+    rec.create(who("coordinator"), {"track": "release", "title": "Collector", "owner": "coordinator",
+                                    "schedule": {"every": "5m", "from": "2026-03-10T10:00:00Z"}, "window": "5m",
+                                    "checkin": True, "checkin_by": "agent-c"})
+    at(store, "2026-03-10T09:57:29Z")
+    sched.run_pass()
+    assert rec.get("R-2")["open_occurrence"] is None
+    at(store, "2026-03-10T09:57:30Z")  # 2.5 minutes before 10:00, half of the 5-minute gap
+    sched.run_pass()
+    assert store.get_item(rec.get("R-2")["open_occurrence"])["occurrence_at"] == "2026-03-10T10:00:00Z"
+
+
+def test_a_job_slower_than_the_lead_checks_in_to_its_own_run(store, sched, rec, who):
+    """Every 5 minutes, the job takes 3: each check-in closes the occurrence of the run that made it.
+    An early occurrence while the previous run is open would be skipped (overlap skip), and every
+    later check-in would close the next run's occurrence."""
+    from datetime import timedelta
+    rec.create(who("coordinator"), {"track": "release", "title": "Collector", "owner": "coordinator",
+                                    "schedule": {"every": "5m", "from": "2026-03-10T10:00:00Z"}, "window": "5m",
+                                    "checkin": True, "checkin_by": "agent-c"})
+    t = datetime.fromisoformat("2026-03-10T09:55:00+00:00")
+    reports = {f"2026-03-10T10:{m + 3:02d}:00Z": f"2026-03-10T10:{m:02d}:00Z" for m in range(0, 30, 5)}
+    closed = []
+    while t <= datetime.fromisoformat("2026-03-10T10:30:00+00:00"):  # a pass every 15 s
+        store.clock.set(t)
+        sched.run_pass()
+        now = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if now in reports:
+            got = rec.checkin(who("agent-c"), "R-2", {"result": "ok"})
+            closed.append((reports[now], got["occurrence"] and got["occurrence"]["occurrence_at"]))
+        t += timedelta(seconds=15)
+    assert closed and all(run == occ for run, occ in closed), closed
+
+
+def test_a_recurrence_without_checkins_is_never_early(store, sched, rec, who):
+    rec.create(who("agent-a"), {"track": "release", "title": "Review", "schedule": {"every": "1d",
+                                "from": "2026-03-11T03:00:00Z"}})
+    at(store, "2026-03-11T02:59:59Z")
+    sched.run_pass()
+    assert rec.get("R-2")["open_occurrence"] is None
+
+
 def test_who_may_check_in(store, sched, rec, who):
     at(store, "2026-03-11T03:00:00Z")
     sched.run_pass()

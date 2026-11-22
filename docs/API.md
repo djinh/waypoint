@@ -236,7 +236,11 @@ wakes the owner (delivery kind `recurring`). Waypoint runs no commands.
   occurrence as done, `failed` drops it (its owner is told), so a late run is never credited to a
   newer one. The recurrence's owner is whoever acts on a missed run; the script checks in with its
   own client, named in `checkin_by` (set by whoever may change the recurrence), which may only check
-  in; the owner, coordinators and humans may check in too. With no open occurrence the check-in is recorded
+  in; the owner, coordinators and humans may check in too. A check-in recurrence's occurrence is
+  created up to 5 minutes before its time (at most half the gap to the next one; only while none of
+  its occurrences is open), so a job that
+  starts on the minute and reports seconds later finds it open; its time, window and due time stay
+  as scheduled, and `next_at` moves on when it is created. With no open occurrence the check-in is recorded
   in the recurrence's history and answered with `occurrence: null`. Open, late occurrences of
   check-in recurrences are listed in `/v1/status` as `missed_checkins`.
 

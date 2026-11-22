@@ -64,7 +64,8 @@ A **recurrence** (id `R-<n>`) is a template plus a schedule:
 
 Each **occurrence is an ordinary item** (`W-<n>`). It carries two new fields: `recurrence` (its `R-<n>`)
 and `occurrence_at`. Occurrences are created only at the moment they fall due, never ahead of time,
-in line with "a message exists only from the moment it falls due".
+in line with "a message exists only from the moment it falls due". The one exception is a check-in
+recurrence with nothing open, whose occurrence comes up to 5 minutes early (§6).
 
 - **One item per run.** This follows the "one item per unit of work" rule: each run has its own
   history, can be marked done or dropped with a note, and shows as late when it isn't done in its
@@ -139,6 +140,12 @@ wp recur failed R-7 --note "disk full"                 # optional: an explicit f
 
 - **A check-in closes the oldest open occurrence**, the run that is overdue first, so a late run is
   never credited to a newer one (this matters with `overlap: allow`).
+- **The occurrence is there before the job ends:** a check-in recurrence's occurrence is created up
+  to 5 minutes before its time (at most half the gap to the next one), so a job that starts on the
+  minute and reports seconds later doesn't race the scheduler's pass. Its time, window and due time
+  stay as scheduled. Only when none of its occurrences is open: while the previous run is still
+  open, the next comes at its time as before, so that run's check-in closes its own occurrence and
+  overlap `skip` doesn't swallow the next.
 - **Setting one up:** the recurrence's owner is whoever acts when a run is missed (the job's
   maintainer, or the coordinator), and `checkin_by` names the client the script checks in as. That
   client may check in and do nothing else with the recurrence; the owner, coordinators and humans may
@@ -196,8 +203,9 @@ wp recur failed R-7 --note "disk full"                 # optional: an explicit f
   watches them.
 - **It doesn't replace systemd timers or cron.** Waypoint is not a scheduler for the machine.
 - **No sub-five-minute schedules, no seconds, no calendars or holidays, no full RRULE.**
-- **No occurrences created ahead of time,** and no editing of a single future occurrence. Pause or
-  change the schedule instead.
+- **No occurrences created ahead of time** (except the few minutes' lead of a check-in recurrence
+  with nothing open, §6), and no editing of a single future occurrence. Pause or change the schedule
+  instead.
 - **No retries, output capture or logs of jobs.** A check-in note (one line, 200 characters,
   content-checked) is all it keeps.
 - **No secrets in templates or notes.** The content rules apply unchanged.

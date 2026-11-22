@@ -25,6 +25,11 @@ from .timeutil import fmt, parse_delay, parse_ts
 log = logging.getLogger("waypoint.scheduler")
 
 PRUNE_DAYS = 30
+# A recurrence that takes check-ins gets its occurrence up to this long before its time (at most half
+# the gap to the following one), so a job that starts on the minute and finishes in seconds finds it
+# open: the job's timer and Waypoint's pass don't wait for each other. Only while none of its
+# occurrences is open; otherwise at its time, as for every recurrence.
+CHECKIN_LEAD = timedelta(minutes=5)
 
 
 @dataclass
@@ -282,25 +287,44 @@ class Scheduler:
         st = self.store
         rec = Recurrences.of(st)
         tz = st.settings.tz
-        for r in c.execute("SELECT * FROM recurrences WHERE state = 'active' AND next_at IS NOT NULL AND next_at <= ? "
-                           "ORDER BY next_at, num", (fmt(now),)).fetchall():
+        for r in c.execute("SELECT * FROM recurrences WHERE state = 'active' AND next_at IS NOT NULL "
+                           "AND (next_at <= ? OR (checkin = 1 AND next_at <= ?)) ORDER BY next_at, num",
+                           (fmt(now), fmt(now + CHECKIN_LEAD))).fetchall():
             # each recurrence on its own: a failure rolls back only that one, and the pass goes on
             c.execute("SAVEPOINT recurrence")
             try:
-                self._recurrence(c, rec, r, now, report, tz)
+                upto = now + self._lead(r, tz) if r["checkin"] and not self._open(c, r["num"]) else now
+                if parse_ts(r["next_at"]) <= upto:
+                    self._recurrence(c, rec, r, now, upto, report, tz)
                 c.execute("RELEASE recurrence")
             except Exception as exc:
                 c.execute("ROLLBACK TO recurrence")
                 c.execute("RELEASE recurrence")
                 self._recurrence_failed(c, rec, r, exc)
 
-    def _recurrence(self, c, rec, r, now: datetime, report: PassReport, tz: str) -> None:
+    @staticmethod
+    def _open(c, num: int) -> bool:
+        """True if an occurrence of recurrence `num` is open. Then the next one is not made early: the
+        running job's check-in must close its own occurrence, and `skip` would swallow an early next."""
+        return c.execute("SELECT 1 FROM items WHERE recurrence = ? AND state IN ('next','running','waiting') "
+                         "LIMIT 1", (num,)).fetchone() is not None
+
+    @staticmethod
+    def _lead(r, tz: str) -> timedelta:
+        """How early a check-in recurrence's next occurrence is made: CHECKIN_LEAD, but at most half
+        the gap to the one after it, so an early occurrence is never mistaken for the previous run's."""
+        sched, at = json.loads(r["schedule"]), parse_ts(r["next_at"])
+        gap = recur.next_after(sched, at, parse_ts(r["created_at"]), tz) - at
+        return min(CHECKIN_LEAD, gap / 2)
+
+    def _recurrence(self, c, rec, r, now: datetime, upto: datetime, report: PassReport, tz: str) -> None:
+        """The occurrences of `r` that fell due up to `upto` (now, or a little later for check-ins)."""
         sched, created = json.loads(r["schedule"]), parse_ts(r["created_at"])
         first = last = parse_ts(r["next_at"])
         count = 1
-        while True:  # count what fell due up to now, keeping only the last
+        while True:  # count what fell due up to `upto`, keeping only the last
             t = recur.next_after(sched, last, created, tz)
-            if t > now:
+            if t > upto:
                 break
             last, count = t, count + 1
         down = report.outage is not None and first > parse_ts(report.outage[0])
@@ -312,7 +336,7 @@ class Scheduler:
             report.occurrences_skipped += count
         else:
             note = f"caught up: {count} occurrence(s) fell due {why}" if missed else None
-            self._occur(c, rec, r, last, note, report)
+            self._occur(c, rec, r, last, note, report, now)
         nxt = recur.next_after(sched, max(last, now), created, tz)
         c.execute("UPDATE recurrences SET last_at = ?, next_at = ? WHERE num = ?", (fmt(last), fmt(nxt), r["num"]))
         rec._changed(c, r["num"])
@@ -331,7 +355,7 @@ class Scheduler:
                         "Check it, then resume it or stop it.")
         rec._changed(c, r["num"])
 
-    def _occur(self, c, rec, r, at: datetime, note: str | None, report: PassReport) -> None:
+    def _occur(self, c, rec, r, at: datetime, note: str | None, report: PassReport, now: datetime) -> None:
         st = self.store
         rid, ats = recurrence_id(r["num"]), fmt(at)
         open_ = c.execute("SELECT num FROM items WHERE recurrence = ? AND state IN ('next','running','waiting') "
@@ -361,7 +385,7 @@ class Scheduler:
         row = self.outbox.item_row(c, num)
         self.outbox.add(c, r["owner"], "recurring", row,
                         f"{self.outbox.ref(row)} is due: the {self.outbox.local(ats)} occurrence of {rid}.",
-                        fell_due_at=ats, late=self.outbox.late_for(ats))
+                        fell_due_at=fmt(min(at, now)), late=self.outbox.late_for(ats))
         report.occurrences += 1
 
     # ------------------------------------------------------------------ outage summary
