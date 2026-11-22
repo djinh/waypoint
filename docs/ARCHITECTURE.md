@@ -162,18 +162,21 @@ the message would be lost. It also waits while a turn is running (Claude Code's 
 the box reads "<verb>… (elapsed"): a line typed then can be taken as a paste and lose its Enter, and
 the session would only read it at the end of the turn anyway. It sends the message as literal text (`send-keys -l --`, control characters and
 newlines replaced by spaces; a trailing `;`, which tmux would read as a command separator, gets a
-space after it) and then a separate `Enter`. About a second later it looks at the box again: if it
-still holds exactly the typed line, it sends `Enter` once more; if the line is still there, it
-clears it (`C-u`, then checks the box is empty) and tries the message again after at least a
-minute (so a pane where Enter keeps failing isn't retyped every few seconds), so its own text never
-blocks the pane. The first such case per message is logged, and the total when the message is
-settled. Before typing, a box that holds exactly a line this adapter typed earlier
-(remembered, or in "ref" mode one of its fixed sentences, which survives a restart) and nothing
-else is cleared the same way. Any other text in the box (a person's, or ours with something added)
-is never touched, and delivery waits. Each case is logged, without the text. (A line someone
-recalls from the input history with the Up arrow is exactly ours too, so the next delivery clears
-it; that is our own text, so nothing of theirs is lost.) In "ref" mode a line counts as ours only if
-it names the same item twice, as the adapter writes it. With `message = "ref"` the typed text is
+space after it) and then a separate `Enter`. Then it watches the pane, looking every second for up
+to 8 seconds (a loaded machine can redraw a pane seconds after the session took the line). The line
+counts as taken as soon as the box no longer starts with it, it waits above the box as a queued
+message ("⎿  Queued"), or the pane turns busy (it was idle when the line was typed, so the turn is
+ours). Only if the box still holds exactly the typed line in an idle pane for the whole watch does it
+send `Enter` once more and watch again; if the line is still there, it clears it (`C-u`, then checks
+the box is empty) and tries the message again after at least a minute (so a pane where Enter keeps
+failing isn't retyped every few seconds), so its own text doesn't block the pane. Only the attempt
+that typed a line may clear it, and only then: a line left by an earlier attempt, by an earlier
+deliverer process or recalled with the Up arrow blocks the box like anyone's text. Before that second `Enter` and before the `C-u` it asks again whether the pane is in a
+mode (the watch can't see copy mode); if it is, nothing more is sent and the message is reported
+"typed, but not submitted". Our line with
+someone's text after it gets no `Enter` and is reported "typed, but not submitted". The first such
+case per message is logged, and the total when the message is settled. Any other text in the box
+is never touched, and delivery waits. Each case is logged, without the text. With `message = "ref"` the typed text is
 not the message's text but a fixed sentence (`adapters.ref_line`) built from a fixed word for the
 message kind and the item id, checked against `W-<n>`; anything unexpected gives "check your items
 with wp_mine". No client-written text (titles, labels, notes, owners) is ever typed in that mode.

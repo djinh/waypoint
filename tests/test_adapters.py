@@ -356,7 +356,7 @@ def test_dashes_in_output_above_the_box_dont_confuse_it():
 
 # ---------------------------------------------------------------------- busy panes and lost Enters
 
-from waypoint.adapters import BUSY, CLEARED, box_text, pane_busy  # noqa: E402
+from waypoint.adapters import BUSY, CLEARED, box_text, pane_busy, queued  # noqa: E402
 
 ORANGE, SALMON = "\x1b[38;5;174m", "\x1b[38;5;216m"
 TIP = f"{DIMGREY}  ⎿  Tip: Use /btw to ask a quick side question{RESET}"
@@ -426,12 +426,13 @@ def test_typed_into_an_idle_session():
 
 
 TYPED_LINE = "[waypoint] Reminder: W-1 (soak) next line"
+LOOKS = int(TmuxAdapter.DEFAULT_WATCH)  # looks per watch when the settle wait is 0 (as in tests)
 
 
 def test_enter_that_didnt_take_is_sent_once_more():
     idle = status_pane(IDLE_STATUS[0])
     stuck = status_pane(IDLE_STATUS[0], box=f"❯ {TYPED_LINE}")
-    fake = FakeTmux([idle, idle, stuck, idle])
+    fake = FakeTmux([idle, idle, *[stuck] * LOOKS, idle])  # still there after the whole watch
     assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter"]
 
@@ -443,8 +444,18 @@ def test_a_line_that_stays_in_the_box_is_reported_not_delivered():
     fake = FakeTmux([idle, idle, stuck, stuck])
     got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
     assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
-    # never more than one extra Enter; the clear is tried, and the box didn't empty
+    # never more than one extra Enter; the clear is tried, the box didn't empty, nothing more is sent
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+
+
+def test_a_clear_that_doesnt_empty_the_box_stops_there(caplog):
+    idle = status_pane(IDLE_STATUS[0])
+    stuck = stuck_box(TYPED_LINE)
+    fake = FakeTmux([idle, idle, stuck])
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
+    assert "left alone" in caplog.text
 
 
 def test_someone_elses_text_after_ours_is_not_our_line():
@@ -488,7 +499,7 @@ def test_our_line_with_someone_elses_text_after_it_is_not_submitted():
 def test_our_line_is_recognised_however_it_wraps():
     idle = status_pane(IDLE_STATUS[0])
     wrapped = status_pane(IDLE_STATUS[0], box="❯\u00a0[waypoint] Reminder: W-1 (soak) ne\n  xt line")
-    fake = FakeTmux([idle, idle, wrapped, idle])
+    fake = FakeTmux([idle, idle, *[wrapped] * LOOKS, idle])
     assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter"]
 
@@ -502,7 +513,7 @@ def stuck_box(line: str) -> str:
 
 def test_a_line_not_taken_after_two_enters_is_cleared_and_tried_again(caplog):
     idle = status_pane(IDLE_STATUS[0])
-    fake = FakeTmux([idle, idle, stuck_box(TYPED_LINE), stuck_box(TYPED_LINE), idle])
+    fake = FakeTmux([idle, idle, *[stuck_box(TYPED_LINE)] * (2 * LOOKS), idle])
     adapter = TmuxAdapter("main", run=fake)
     assert adapter.deliver(DELIVERY) == CLEARED  # nothing left behind; typed again after a minute
     assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter", "Enter", "C-u"]
@@ -511,27 +522,17 @@ def test_a_line_not_taken_after_two_enters_is_cleared_and_tried_again(caplog):
     assert TYPED_LINE not in caplog.text  # the log names the case, not the text
 
 
-def test_an_earlier_line_of_ours_is_cleared_before_the_next_delivery(caplog):
+def test_an_earlier_line_of_ours_is_never_cleared():
+    """Only the attempt that typed a line may clear it: a line left by an earlier attempt, an earlier
+    deliverer process or the Up arrow blocks the box like anyone's text."""
     idle = status_pane(IDLE_STATUS[0])
     adapter = TmuxAdapter("main", run=FakeTmux([idle]))
-    assert adapter.deliver(DELIVERY) == DELIVERED  # remembered as ours
-    earlier = stuck_box(TYPED_LINE)                 # ...but its Enter was lost after all
-    fake = FakeTmux([earlier, idle, idle, idle])
+    assert adapter.deliver(DELIVERY) == DELIVERED
+    fake = FakeTmux([stuck_box(TYPED_LINE)])  # its Enter was lost after all, or it was recalled
     adapter._run = fake
-    nxt = dict(DELIVERY, id="D-8", text="Reminder: W-2 (deploy)")
-    assert adapter.deliver(nxt) == DELIVERED
-    assert [a[-1] for a in fake.sent()] == ["C-u", "[waypoint] Reminder: W-2 (deploy)", "Enter"]
-    assert "cleared an earlier line left unsent" in caplog.text
-
-
-def test_a_ref_line_is_recognised_after_a_restart():
-    """A new deliverer process doesn't remember what the last one typed, but a ref line is ours by its form."""
-    line = "[waypoint] wake-up for W-17 (reminder): read it with wp_get W-17"
-    idle = status_pane(IDLE_STATUS[0])
-    fake = FakeTmux([stuck_box(line), idle, idle, idle])
-    got = TmuxAdapter("main", run=fake, message="ref").deliver(dict(DELIVERY, item="W-18"))
-    assert got == DELIVERED
-    assert [a[-1] for a in fake.sent()][:1] == ["C-u"]
+    assert adapter.deliver(dict(DELIVERY, id="D-8", text="Reminder: W-2 (deploy)")) == RETRY
+    assert adapter.deliver(DELIVERY) == RETRY  # its own message too: not typed again, not cleared
+    assert fake.sent() == []
 
 
 @pytest.mark.parametrize("box,mode", [
@@ -540,24 +541,13 @@ def test_a_ref_line_is_recognised_after_a_restart():
     ("[waypoint] wake-up for W-17 (reminder): read it with wp_get W-17 thanks", "ref"),
     ("[waypoint] wake-up for W-17 (reminder): read it with wp_get W-17", "full"),  # a full-mode adapter
                                                                                   # doesn't know it
-    ("[waypoint] Reminder: W-1 (soak) next line", "full"),                       # not typed by this adapter
+    ("[waypoint] Reminder: W-1 (soak) next line", "full"),                       # not typed by this attempt
+    ("[waypoint] wake-up for W-17 (reminder): read it with wp_get W-17", "ref"),   # a ref line, after a restart
 ])
 def test_other_text_is_never_touched(box, mode):
     fake = FakeTmux([stuck_box(box)])
     assert TmuxAdapter("main", run=fake, message=mode).deliver(DELIVERY) == RETRY
     assert fake.sent() == []  # no Ctrl-U, nothing typed: delivery stays blocked
-
-
-def test_a_clear_that_doesnt_empty_the_box_stops_there(caplog):
-    idle = status_pane(IDLE_STATUS[0])
-    adapter = TmuxAdapter("main", run=FakeTmux([idle]))
-    adapter.deliver(DELIVERY)
-    still = stuck_box(TYPED_LINE)
-    fake = FakeTmux([still, still])
-    adapter._run = fake
-    assert adapter.deliver(dict(DELIVERY, id="D-9")) == RETRY
-    assert [a[-1] for a in fake.sent()] == ["C-u"]  # one Ctrl-U, nothing typed after it
-    assert "left alone" in caplog.text
 
 
 def test_a_busy_pane_with_our_line_is_left_alone():
@@ -576,7 +566,7 @@ def test_repeats_for_one_message_are_logged_first_and_last(caplog):
     stuck = stuck_box(TYPED_LINE)
     adapter = TmuxAdapter("main", run=FakeTmux([idle]))
     for _ in range(3):
-        adapter._run = FakeTmux([idle, idle, stuck, stuck, idle])
+        adapter._run = FakeTmux([idle, idle, *[stuck] * (2 * LOOKS), idle])
         assert adapter.deliver(DELIVERY) == CLEARED
     assert caplog.text.count("pressing Enter once more") == 1
     assert caplog.text.count("cleared D-7's line") == 1
@@ -594,3 +584,77 @@ def test_a_ref_line_must_name_one_item(line):
     fake = FakeTmux([stuck_box(line)])
     assert TmuxAdapter("main", run=fake, message="ref").deliver(DELIVERY) == RETRY
     assert fake.sent() == []
+
+
+# ---------------------------------------------------------------------- a pane that redraws late, a busy one
+
+QUEUED_LINE = (f"{DIMGREY}\x1b[48;5;255m❯ {TYPED_LINE}{RESET}\n"
+               f"{DIMGREY}\x1b[49m  ⎿  Queued · ctrl+x ctrl+s to send now{RESET}")
+# the box of a busy pane with a queued message (shape from a real pane): a dim hint only
+QUEUED_HINT = f"{DIMGREY}❯\u00a0\x1b[2m{RESET}Press up to edit queued messages\x1b[0m"
+
+
+def queued_pane(box: str = QUEUED_HINT) -> str:
+    return "\n".join(["● Still working on it.", "", QUEUED_LINE, "", status_pane(BUSY_STATUS[0], box=box)])
+
+
+def test_a_pane_that_redraws_late_is_waited_for(caplog):
+    """The session took the line at once, but a loaded machine redrew the pane seconds later: one
+    Enter, no "not taken", no clear (seen twice in one night)."""
+    idle = status_pane(IDLE_STATUS[0])
+    late = stuck_box(TYPED_LINE)
+    fake = FakeTmux([idle, idle, late, late, late, idle])
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+    assert "wasn't taken" not in caplog.text
+
+
+def test_a_turn_that_starts_after_enter_means_taken():
+    """Idle when typed, busy after Enter: the turn is ours. No second Enter into a busy pane, even if
+    the box isn't redrawn yet."""
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle, idle, status_pane(BUSY_STATUS[0], box=f"❯\u00a0{TYPED_LINE}")])
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+
+
+def test_a_queued_line_is_taken():
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle, idle, queued_pane()])
+    assert TmuxAdapter("main", run=fake).deliver(DELIVERY) == DELIVERED
+    assert [a[-1] for a in fake.sent()] == [TYPED_LINE, "Enter"]
+    assert input_is_empty(queued_pane()) and pane_busy(queued_pane())
+
+
+def test_queued_names_only_that_line():
+    assert queued(queued_pane(), TYPED_LINE)
+    assert queued(queued_pane(), TYPED_LINE.replace(" ", "  "))  # wrapped or not
+    assert not queued(queued_pane(), "[waypoint] Reminder: W-2 (deploy)")
+    assert not queued(status_pane(BUSY_STATUS[0]), TYPED_LINE)
+    assert not queued(NO_BOX, TYPED_LINE)
+    wrapped = queued_pane().replace(f"❯ {TYPED_LINE}", "❯ [waypoint] Reminder: W-1\n  (soak) next line")
+    assert queued(wrapped, TYPED_LINE)
+
+
+def test_the_watch_looks_every_settle_for_the_watch_time():
+    waits = []
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle, idle, stuck_box(TYPED_LINE)])
+    TmuxAdapter("main", run=fake, settle=1.0, watch=8.0, sleep=waits.append).deliver(DELIVERY)
+    assert waits == [1.0] * 16  # two whole watches before the clear
+
+
+@pytest.mark.parametrize("modes, keys", [
+    (["0", "0", "1"], [TYPED_LINE, "Enter"]),                # scrolled back during the first watch
+    (["0", "0", "0", "1"], [TYPED_LINE, "Enter", "Enter"]),  # ...or during the second
+])
+def test_no_key_goes_into_a_mode_after_typing(modes, keys, caplog):
+    """capture-pane shows the normal screen in copy mode, so the mode is asked again before the
+    second Enter and before the C-u: an Enter there would end a person's copy mode."""
+    idle = status_pane(IDLE_STATUS[0])
+    fake = FakeTmux([idle, idle, stuck_box(TYPED_LINE)], modes=modes)
+    got = TmuxAdapter("main", run=fake).deliver(DELIVERY)
+    assert isinstance(got, Undeliverable) and got.reason == "typed, but not submitted"
+    assert [a[-1] for a in fake.sent()] == keys  # no Enter and no C-u into the mode
+    assert "the pane is in a mode; left alone" in caplog.text
+

@@ -28,7 +28,7 @@ registered clients (the database is opened read-only and never migrated; `--conf
 | `server.listen` | `["127.0.0.1"]` | The IP addresses to listen on, each named. `0.0.0.0`, `::` and host names are refused. Add a private-network address of the machine to reach Waypoint from other hosts. |
 | `server.port` | `7130` | The TCP port, the same on every address. |
 | `store.database` | `/var/lib/waypoint/waypoint.db` | The SQLite file. Created and migrated at start; the directory must exist and be writable by the daemon's user. |
-| `site.tz` | `UTC` | IANA time zone for times shown to people and for day-precision dates (`when` with precision `day`). Stored times are always UTC. |
+| `site.tz` | `UTC` | IANA time zone for times shown to people, for day-precision dates (`when` with precision `day`), and the default zone of recurrence schedules (`daily 09:00` without its own `tz` is 09:00 in this zone). Stored times are always UTC. |
 | `site.done_days` | `3` | How many days done and dropped items stay in the views (0 or more). |
 | `site.coordinator` | first client with role `coordinator` | The client told about escalations, undeliverable messages, silent deliverers and outages. If set, it must be a registered coordinator, or `waypointd serve` refuses to start. |
 | `site.default_ladder` | nudge at `0m`, escalate and flag at `1h` | The overdue ladder for items without their own: a list of `{after, action[, to]}`, `after` a delay like `0m`, `90m`, `2h`, `1d`; `action` one of `nudge`, `escalate`, `notify` (needs `to`, a registered human, checked at start), `flag`; only `notify` takes `to`. |

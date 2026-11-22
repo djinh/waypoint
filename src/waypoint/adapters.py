@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import subprocess
 import time
-from collections import deque
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -46,6 +46,8 @@ _PROMPT = re.compile(r"^\s*[❯>]")
 # elapsed time in brackets ("✢ Thinking… (51s · ↓ 3.2k tokens)"). Idle it reads "✻ Worked for 14s".
 # Older versions said "esc to interrupt" there.
 _BUSY = re.compile(r"^\s*\S\s+\S+…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b|esc to interrupt")
+# A line submitted while a turn runs leaves the box and waits above it, marked "⎿  Queued · …"
+_QUEUED = re.compile(r"^\s*⎿\s+Queued\b")
 # C0 and C1 control characters and DEL; a message must never act as keys
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
@@ -75,6 +77,26 @@ def pane_busy(capture: str) -> bool:
         return False
     above = [line for line in lines[:rules[-2]] if line.strip()][-4:]
     return any(_BUSY.search(line) for line in above)
+
+
+def queued(capture: str, line: str) -> bool:
+    """True if `line` waits above the input box as a queued message: the lines just before a
+    "⎿  Queued" mark, from the prompt sign on, are that line (compared without whitespace)."""
+    lines = [_ANSI.sub("", x) for x in capture.splitlines()]
+    rules = [i for i, x in enumerate(lines) if _RULE.match(x)]
+    if len(rules) < 2:
+        return False
+    above = lines[:rules[-2]]
+    ours = _squash(line)
+    for i, mark in enumerate(above):
+        if not _QUEUED.match(mark):
+            continue
+        for j in range(i - 1, max(i - 40, -1), -1):  # a long line wraps over several screen lines
+            if _PROMPT.match(above[j]):
+                if _squash(_PROMPT.sub("", " ".join(above[j:i]), count=1)) == ours:
+                    return True
+                break
+    return False
 
 
 def box_text(capture: str) -> str | None:
@@ -156,14 +178,18 @@ class TmuxAdapter:
     item id (see ref_line), for sessions that must never receive text written by other clients."""
 
     DEFAULT_SETTLE = 1.0
+    # how long to watch a pane after Enter before calling the line not taken: a loaded machine can
+    # redraw a pane seconds after the session took the line
+    DEFAULT_WATCH = 8.0
 
     def __init__(self, target: str, socket: str | None = None, prefix: str = "[waypoint] ",
                  tmux: str = "tmux", run=None, timeout: float = 5, message: str = "full",
-                 settle: float | None = None, sleep=time.sleep):
+                 settle: float | None = None, watch: float | None = None, sleep=time.sleep):
         if message not in MESSAGE_MODES:
             raise ValueError("message must be full or ref")
-        # seconds to wait before checking that Enter submitted the line
+        # seconds between looks at the pane after Enter, and how long to keep looking
         self.settle = self.DEFAULT_SETTLE if settle is None else settle
+        self.watch = self.DEFAULT_WATCH if watch is None else watch
         self._sleep = sleep
         self.target = target
         self.socket = socket
@@ -172,16 +198,8 @@ class TmuxAdapter:
         self.tmux = tmux
         self.timeout = timeout
         self._run = run or self._subprocess
-        # Lines this adapter typed (whitespace removed): only such a line, alone in the box, may be
-        # cleared. In "ref" mode the fixed sentences are recognised too, also after a restart.
-        self._typed: deque[str] = deque(maxlen=100)
         # per message id: how often its line wasn't taken (logged the first time, summed up at the end)
         self._not_taken: dict[str, int] = {}
-        words = "|".join(re.escape(_squash(w)) for w in sorted(set(_REF_KIND.values())))
-        fixed = "|".join(re.escape(_squash(s)) for s in [*_REF_NO_ITEM.values(), _REF_FALLBACK])
-        self._ref_typed = re.compile(
-            re.escape(_squash(one_line(prefix))) +
-            rf"(?:wake-upfor(W-[1-9][0-9]{{0,9}})\((?:{words})\):readitwithwp_get\1|{fixed})")
 
     def _subprocess(self, args: list[str]) -> tuple[int, str]:
         try:
@@ -207,40 +225,23 @@ class TmuxAdapter:
         Not ready: no pane, a mode (in copy mode capture-pane still shows the normal screen, but
         typed keys go to the mode), anything in the input box or no box (RETRY), or a turn running
         (BUSY: a line typed then can lose its Enter, and the session would only read it at the
-        end of the turn anyway)."""
-        code, out = self._tmux("display-message", "-p", "-t", self.target, "#{pane_in_mode}")
-        if code != 0 or out.strip() != "0":
+        end of the turn anyway). Whatever the box holds is never touched, also a line an earlier
+        attempt typed: only the attempt that typed a line may clear it."""
+        if self._in_mode():
             return RETRY
         cap = self.capture()
         if cap is None or input_box(cap) is None:
             return RETRY
         if pane_busy(cap):
             return BUSY  # whatever the box holds: it may be text typed during the turn
-        if input_is_empty(cap):
-            return True
-        # a line this deliverer typed earlier that never got submitted (its Enter was lost): clear it
-        # and deliver anew; anything else in the box is someone's text and is never touched
-        return True if self._clear_if_ours(box_text(cap) or "", "an earlier line left unsent") else RETRY
+        return True if input_is_empty(cap) else RETRY
 
-    def _is_ours(self, text: str) -> bool:
-        squashed = _squash(text)
-        if not squashed:
-            return False
-        return squashed in self._typed or (self.message == "ref" and self._ref_typed.fullmatch(squashed) is not None)
-
-    def _clear_if_ours(self, text: str, why: str, quiet: bool = False) -> bool:
-        """If the box holds exactly a line of ours, Ctrl-U it and check the box is empty. Logged
-        (unless `quiet`: a repeat for the same message, summed up when it settles)."""
-        if not self._is_ours(text):
-            return False
-        code, _ = self._tmux("send-keys", "-t", self.target, "C-u")
-        cap = self.capture() if code == 0 else None
-        if cap is None or not input_is_empty(cap):
-            log.warning("pane %s: tried to clear %s, but the box isn't empty; left alone", self.target, why)
-            return False
-        if not quiet:
-            log.warning("pane %s: cleared %s", self.target, why)
-        return True
+    def _in_mode(self) -> bool:
+        """True if the pane is in a mode (copy mode, a choose list), or tmux can't say. capture-pane
+        still shows the normal screen then, but keys go to the mode: an Enter there would end a
+        person's copy mode and copy their selection."""
+        code, out = self._tmux("display-message", "-p", "-t", self.target, "#{pane_in_mode}")
+        return code != 0 or out.strip() != "0"
 
     def settled(self, delivery_id: str) -> None:
         """The deliverer is done with this message: log the last of its not-taken cases, if repeated."""
@@ -261,39 +262,67 @@ class TmuxAdapter:
         if state is not True:
             return state
         code, _ = self._tmux("send-keys", "-t", self.target, "-l", "--", text)
-        self._typed.append(_squash(text))
         if code != 0:
             return RETRY
         return self._submit(text, delivery.get("id", ""))
 
+    def _watch(self, ours: str) -> str:
+        """After an Enter: look at the pane every `settle` seconds for up to `watch` seconds.
+
+        "taken" as soon as the box no longer starts with our line, our line waits above the box as
+        a queued message, or the pane is busy (it was idle when we typed, so the turn is ours);
+        "added" when the box holds our line with someone's text after it; "stuck" when the box
+        still holds exactly our line, in an idle pane, at the end."""
+        looks = max(1, math.ceil(self.watch / self.settle)) if self.settle > 0 else max(1, int(self.watch))
+        for look in range(looks):
+            self._sleep(self.settle)
+            cap = self.capture()
+            if cap is None:
+                return "taken"  # the pane is gone or changed beyond a box: nothing of ours is left there
+            now = _squash(box_text(cap) or "")
+            if not now.startswith(ours) or queued(cap, ours) or pane_busy(cap):
+                return "taken"
+            if now != ours:
+                return "added"
+        return "stuck"
+
     def _submit(self, text: str, delivery_id: str = ""):
-        """Enter, then make sure it took. After a moment: if the box holds exactly our line, Enter once
-        more (there are a few milliseconds between that look and the second Enter in which someone
-        could start typing); if it holds our line with more after it (someone added to it), or still
-        holds it after the second Enter, report "typed, but not submitted" rather than "delivered".
-        Lines are compared without whitespace, because Claude Code wraps long input."""
+        """Enter, then make sure it took (see _watch). Only if the box still holds exactly our line in
+        an idle pane after the whole watch: Enter once more and watch again. If it is still stuck,
+        clear it (this attempt typed it, and nothing was added) and try again in a minute; if our
+        line got text added, report "typed, but not submitted" and never press Enter on it.
+        Before each of those keys the pane must not be in a mode (the watch can't see one): if it is,
+        nothing more is sent. Lines are compared without whitespace, because Claude Code wraps long input."""
         ours = _squash(text)
+        name = delivery_id or "a message"
+        first = delivery_id not in self._not_taken
         for attempt in range(2):
             code, _ = self._tmux("send-keys", "-t", self.target, "Enter")
             if code != 0:
                 return Undeliverable("typed, but Enter failed")
-            self._sleep(self.settle)
-            cap = self.capture()
-            now = _squash(box_text(cap) or "") if cap is not None else ""
-            if not now.startswith(ours):
+            seen = self._watch(ours)
+            if seen == "taken":
                 return DELIVERED
-            if now != ours:
-                break  # someone typed after our line: never press Enter on their text
-            if attempt == 0 and delivery_id not in self._not_taken:
-                log.warning("pane %s: %s's line wasn't taken; pressing Enter once more", self.target,
-                            delivery_id or "a message")
-        if now == ours:
-            first = delivery_id not in self._not_taken
-            if self._clear_if_ours(text, f"{delivery_id or 'a message'}'s line after two Enters; trying again "
-                                         "in a minute", quiet=not first):
-                self._not_taken[delivery_id] = self._not_taken.get(delivery_id, 0) + 1
-                return CLEARED  # nothing left behind; typed again, but not for a while
-        return Undeliverable("typed, but not submitted")
+            if seen == "added":
+                return Undeliverable("typed, but not submitted")  # never press Enter on someone's text
+            if self._in_mode():
+                # someone is scrolling back (or tmux can't say): never a key into a mode; our line stays
+                log.warning("pane %s: %s's line wasn't taken, and the pane is in a mode; left alone",
+                            self.target, name)
+                return Undeliverable("typed, but not submitted")
+            if attempt == 0 and first:
+                log.warning("pane %s: %s's line wasn't taken; pressing Enter once more", self.target, name)
+        # still exactly our line, typed by this attempt, idle for two whole watches: clear it
+        why = f"{name}'s line after two Enters; trying again in a minute"
+        code, _ = self._tmux("send-keys", "-t", self.target, "C-u")
+        cap = self.capture() if code == 0 else None
+        if cap is None or not input_is_empty(cap):
+            log.warning("pane %s: tried to clear %s, but the box isn't empty; left alone", self.target, why)
+            return Undeliverable("typed, but not submitted")
+        if first:
+            log.warning("pane %s: cleared %s", self.target, why)
+        self._not_taken[delivery_id] = self._not_taken.get(delivery_id, 0) + 1
+        return CLEARED  # nothing left behind; typed again, but not for a while
 
 
 # ---------------------------------------------------------------------- HTTP adapters

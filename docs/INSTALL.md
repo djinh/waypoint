@@ -316,6 +316,21 @@ WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1 --note "backup ok"
 The schedule in Waypoint is only an expectation: keep it in step with the timer. A run the job
 doesn't report is late within the window and escalates like any item.
 
+From a cron line, report the job's own exit code after it, so the job never depends on Waypoint and
+a check-in that can't get through shows as a missed run, never as a failed one:
+
+```sh
+30 3 * * * /usr/local/bin/backup; rc=$?; if [ $rc -eq 0 ]; then WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1; else WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur failed R-1 --note "exit $rc"; fi
+```
+
+### Upgrading to 2.0.1
+
+2.0.1 changes only the deliverer's tmux adapter: no migration, no API change. After Enter it
+watches the pane for up to 8 seconds before it calls a line not taken, so a pane that redraws late
+on a loaded machine is no longer reported undeliverable, and it clears only a line it typed in that
+same attempt. Install the new version and restart each deliverer (`waypoint-deliver`); the daemon
+may be restarted too but needn't be.
+
 ## If Waypoint is down
 
 Agents keep working; their tools answer "Waypoint unavailable". Nothing is lost: when it is back,
