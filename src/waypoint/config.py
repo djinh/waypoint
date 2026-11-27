@@ -25,6 +25,7 @@ class Config:
     port: int = DEFAULT_PORT
     database: str = "/var/lib/waypoint/waypoint.db"
     settings: Settings = field(default_factory=Settings)
+    backup_keep_days: int | None = None  # None: the backup command removes nothing
 
 
 # Every key a section may hold; anything else is a typo that would otherwise load silently.
@@ -32,6 +33,7 @@ KEYS = {
     "server": {"listen", "port"},
     "store": {"database"},
     "site": {"tz", "coordinator", "running_lease", "running_grace", "done_days", "default_ladder"},
+    "backup": {"keep_days"},
 }
 
 
@@ -75,7 +77,7 @@ def load(path: str | Path | None) -> Config:
         extra = set(data.get(section, {})) - allowed
         if extra:
             raise ConfigError(f"unknown key: {section}.{sorted(extra)[0]}")
-    server, store, site = (data.get(s, {}) for s in ("server", "store", "site"))
+    server, store, site, bk = (data.get(s, {}) for s in ("server", "store", "site", "backup"))
     if "listen" in server:
         listen = server["listen"]
         if not isinstance(listen, list) or not all(isinstance(a, str) for a in listen):
@@ -103,6 +105,8 @@ def load(path: str | Path | None) -> Config:
                 raise ConfigError(f"site.{key}: a duration like 90m, 2h or 1d") from None
     if "default_ladder" in site:
         s.default_ladder = _ladder(site["default_ladder"])
+    if "keep_days" in bk:
+        cfg.backup_keep_days = _int(bk["keep_days"], "backup.keep_days", 1, 3650)
     check(cfg)
     return cfg
 

@@ -29,3 +29,9 @@ default_ladder = [
   { after = "1h", action = "escalate" },
   { after = "1h", action = "flag" },
 ]
+
+[backup]
+# How many days of backups "waypointd backup" keeps: after a backup that worked, it removes the
+# waypoint-YYYYMMDD.db/.json files in its folder dated more than this many days before today.
+# Default: none removed. "waypointd backup DIR --keep-days N" overrides it for one run.
+# keep_days = 30

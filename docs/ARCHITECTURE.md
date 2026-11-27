@@ -12,7 +12,7 @@ in [API.md](API.md) and [api/openapi.yaml](api/openapi.yaml).
 | `config.py` | The TOML configuration and its safety checks (loopback by default, wildcard addresses refused, a valid time zone and ladder). |
 | `api.py` | The Starlette app: the token guard (pure ASGI middleware), the routes, query parsing, error responses. Handlers stay thin; the store does the work. |
 | `store.py` | Clients, tracks and items in SQLite; validation beyond the schema; permissions; conditions and loop refusal; derivation of states and flags; history. |
-| `monitor.py` | `/v1/status` (what needs attention), `/metrics` (Prometheus counts), and `waypointd backup` (a consistent database copy and a JSON export). |
+| `monitor.py` | `/v1/status` (what needs attention), `/metrics` (Prometheus counts), and `waypointd backup` (a consistent database copy and a JSON export, and removing those older than `backup.keep_days`). |
 | `events.py` | `/v1/events`: the broadcaster that turns committed changes into server-sent events. |
 | `views.py` | The two read models, built from serialized items. |
 | `scheduler.py` | The scheduler: a pass every 15 seconds re-derives what time changes, sends wake-ups, climbs overdue ladders and catches up after an outage. |

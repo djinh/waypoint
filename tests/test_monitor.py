@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import stat
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -113,3 +115,113 @@ def test_backup_command(tmp_path, capsys):
     cfgp.write_text(f'[store]\ndatabase = "{tmp_path / "w.db"}"\n')
     assert daemon.main(["--config", str(cfgp), "backup", str(tmp_path / "b")]) == 0
     assert "wrote waypoint-" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- keeping N days of backups
+def backups(d, *days, ext=(".db", ".json")):
+    d.mkdir(exist_ok=True)
+    for day in days:
+        for e in ext:
+            (d / f"waypoint-{day}{e}").write_text("x")
+
+
+def test_prune_removes_only_backups_dated_before_the_cutoff(tmp_path):
+    d = tmp_path / "b"
+    backups(d, "20261026", "20261027", "20261028", "20261127", "20261201")
+    for odd in ("waypoint-20261001.db.gz", "notes-20261001.db", ".waypoint-20261001.db.tmp", "waypoint-2026101.db",
+                "waypoint-20261301.db", "waypoint-20260230.json", "Waypoint-20261001.db", "waypoint-20261001.DB"):
+        (d / odd).write_text("keep")
+    (d / "waypoint-20261002.db").mkdir()  # a folder with a backup's name
+    os.utime(d / "waypoint-20261127.db", (0, 0))  # an old file time doesn't matter: the name's date does
+    removed, failed = monitor.prune_backups(d, date(2026, 11, 27), 30)
+    assert removed == ["waypoint-20261026.db", "waypoint-20261026.json", "waypoint-20261027.db", "waypoint-20261027.json"]
+    assert failed == []
+    left = sorted(p.name for p in d.iterdir())
+    assert "waypoint-20261028.db" in left and "waypoint-20261127.db" in left and "waypoint-20261201.json" in left
+    assert len(left) == 6 + 8 + 1
+    assert monitor.prune_backups(d, date(2026, 11, 27), 30) == ([], [])  # nothing more to do
+
+
+def test_prune_leaves_a_symlink_and_its_target_alone(tmp_path):
+    d, elsewhere = tmp_path / "b", tmp_path / "precious.db"
+    d.mkdir()
+    elsewhere.write_text("keep")
+    (d / "waypoint-20200101.db").symlink_to(elsewhere)
+    assert monitor.prune_backups(d, date(2026, 11, 27), 1) == ([], [])
+    assert elsewhere.read_text() == "keep" and (d / "waypoint-20200101.db").is_symlink()
+
+
+def test_prune_keep_days_one_keeps_today_and_yesterday(tmp_path):
+    d = tmp_path / "b"
+    backups(d, "20261125", "20261126", "20261127")
+    removed, _ = monitor.prune_backups(d, date(2026, 11, 27), 1)
+    assert removed == ["waypoint-20261125.db", "waypoint-20261125.json"]
+    with pytest.raises(ValueError):
+        monitor.prune_backups(d, date(2026, 11, 27), 0)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root removes files from a read-only folder")
+def test_prune_reports_what_it_could_not_remove(tmp_path):
+    d = tmp_path / "b"
+    backups(d, "20200101")
+    d.chmod(0o500)
+    try:
+        removed, failed = monitor.prune_backups(d, date(2026, 11, 27), 30)
+    finally:
+        d.chmod(0o700)
+    assert removed == [] and [n for n, _ in failed] == ["waypoint-20200101.db", "waypoint-20200101.json"]
+
+
+def days_ago(n):
+    return (datetime.now(timezone.utc).date() - timedelta(days=n)).strftime("%Y%m%d")
+
+
+def test_backup_command_keeps_everything_by_default(tmp_path, capsys):
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f'[store]\ndatabase = "{tmp_path / "w.db"}"\n')
+    backups(tmp_path / "b", days_ago(400))
+    assert daemon.main(["--config", str(cfgp), "backup", str(tmp_path / "b")]) == 0
+    assert "removed" not in capsys.readouterr().out
+    assert (tmp_path / "b" / f"waypoint-{days_ago(400)}.db").exists()
+
+
+def test_backup_command_with_keep_days_from_the_config_and_the_option(tmp_path, capsys):
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f'[store]\ndatabase = "{tmp_path / "w.db"}"\n[backup]\nkeep_days = 30\n')
+    b = tmp_path / "b"
+    backups(b, days_ago(45), days_ago(10))
+    assert daemon.main(["--config", str(cfgp), "backup", str(b)]) == 0
+    out = capsys.readouterr().out
+    assert f"removed 2 backup files older than 30 days: waypoint-{days_ago(45)}.db, waypoint-{days_ago(45)}.json" in out
+    assert {p.name for p in b.iterdir()} == {f"waypoint-{days_ago(n)}{e}" for n in (10, 0) for e in (".db", ".json")}
+    assert daemon.main(["--config", str(cfgp), "backup", str(b), "--keep-days", "5"]) == 0  # the option wins
+    assert {p.name for p in b.iterdir()} == {f"waypoint-{days_ago(0)}{e}" for e in (".db", ".json")}
+    for bad in ("0", "3651"):
+        assert daemon.main(["--config", str(cfgp), "backup", str(b), "--keep-days", bad]) == 2
+    assert "--keep-days: a whole number" in capsys.readouterr().err
+
+
+def test_a_failed_backup_removes_nothing(tmp_path, monkeypatch, capsys):
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f'[store]\ndatabase = "{tmp_path / "w.db"}"\n[backup]\nkeep_days = 1\n')
+    b = tmp_path / "b"
+    backups(b, days_ago(45))
+
+    def broken(store, directory):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(monitor, "backup", broken)
+    assert daemon.main(["--config", str(cfgp), "backup", str(b)]) == 1
+    assert "No space left" in capsys.readouterr().err
+    assert len(list(b.iterdir())) == 2
+
+
+@pytest.mark.parametrize("value", ["0", "3651", '"30"', "true", "30.0"])
+def test_bad_keep_days_are_refused(tmp_path, value):
+    from waypoint.config import ConfigError, load
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f"[backup]\nkeep_days = {value}\n")
+    with pytest.raises(ConfigError, match="backup.keep_days"):
+        load(cfgp)
+    cfgp.write_text("[backup]\nkeep = 30\n")
+    with pytest.raises(ConfigError, match="unknown key: backup.keep"):
+        load(cfgp)

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import __version__
@@ -153,6 +154,41 @@ def backup(store: Store, directory: str | Path) -> tuple[Path, Path]:
         json.dump(export, f, indent=1, ensure_ascii=False)
     os.replace(tmp_json, json_path)
     return db_path, json_path
+
+
+_BACKUP_NAME = re.compile(r"waypoint-(\d{8})\.(?:db|json)")
+
+
+def prune_backups(directory: str | Path, today: date, keep_days: int) -> tuple[list[str], list[tuple[str, str]]]:
+    """Remove the backups in DIRECTORY dated more than KEEP_DAYS days before TODAY: with 30 on
+    27 November, 27 October and older go, 28 October stays. Only regular files named exactly as
+    backup() names them are touched (the date in the name decides, not the file's time); symlinks,
+    subfolders, other names and dates after the cutoff are left alone. Returns the names removed
+    and (name, reason) for those that could not be."""
+    if keep_days < 1:
+        raise ValueError("keep_days: 1 or more")
+    cutoff = today - timedelta(days=keep_days)
+    removed: list[str] = []
+    failed: list[tuple[str, str]] = []
+    with os.scandir(directory) as entries:
+        found = sorted((e for e in entries if _BACKUP_NAME.fullmatch(e.name)), key=lambda e: e.name)
+    for entry in found:
+        stamp = _BACKUP_NAME.fullmatch(entry.name)[1]
+        try:
+            day = datetime.strptime(stamp, "%Y%m%d").date()
+        except ValueError:
+            continue
+        if day.strftime("%Y%m%d") != stamp or day >= cutoff:
+            continue
+        try:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            os.unlink(entry.path)
+        except OSError as e:
+            failed.append((entry.name, e.strerror or str(e)))
+        else:
+            removed.append(entry.name)
+    return removed, failed
 
 
 def export_json(store: Store) -> dict:

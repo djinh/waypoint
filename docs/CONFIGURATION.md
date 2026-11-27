@@ -34,6 +34,7 @@ registered clients (the database is opened read-only and never migrated; `--conf
 | `site.default_ladder` | nudge at `0m`, escalate and flag at `1h` | The overdue ladder for items without their own: a list of `{after, action[, to]}`, `after` a delay like `0m`, `90m`, `2h`, `1d`; `action` one of `nudge`, `escalate`, `notify` (needs `to`, a registered human, checked at start), `flag`; only `notify` takes `to`. |
 | `site.running_lease` | `2h` | How long `running` lasts unless the owner renews it with an update. |
 | `site.running_grace` | `1h` | How long after the "still running?" check was delivered the item goes back to `next` without an update. |
+| `backup.keep_days` | none (keep every backup) | After a backup that worked, `waypointd backup` removes the backups in its folder dated more than this many days before today (1 to 3650; see section 7). `--keep-days N` overrides it for one run. |
 
 **Fixed timings** (not configurable; listed so operators know them): scheduler pass every 15 s;
 a gap of more than 60 s between passes is an outage; delivery lease 120 s; a deliverer silent for
@@ -144,15 +145,21 @@ Examples in [`systemd/`](../systemd/); adjust them to your installation.
 | --- | --- |
 | `waypoint.service` (system) | `User=`/`Group=` (default `waypoint`), `ExecStart=` (path to `waypointd`, `--config` path), `StateDirectory=waypoint` (the database folder, `/var/lib/waypoint`), `ConfigurationDirectory=waypoint` (`/etc/waypoint`). Hardening options are meant to stay as they are. |
 | `waypoint-deliver.service` (user) | `ExecStart=` (path to `waypoint-deliver`, `--config` path, default `~/.config/waypoint/deliver.toml`). Run `loginctl enable-linger USER` so it runs without a login. |
-| `waypoint-backup.service` + `.timer` (system) | `ExecStart=` (the backup folder, default `/var/lib/waypoint/backup`); `OnCalendar=` in the timer (default 03:30 daily). |
+| `waypoint-backup.service` + `.timer` (system) | `ExecStart=` (the backup folder, default `/var/lib/waypoint/backup`; `--keep-days N` there, or `backup.keep_days` in `waypoint.toml`); `OnCalendar=` in the timer (default 03:30 daily). |
 
 ## 7. Backups
 
 `waypointd --config FILE backup DIR` writes `waypoint-YYYYMMDD.db` (a consistent copy of the
 database) and `waypoint-YYYYMMDD.json` (clients without token data, tracks, items with history) into
 `DIR`, mode 0600, replacing the same day's pair. Run it as the daemon's user; it never migrates the
-database, and refuses one whose schema differs from its own version. Prune old days with your
-normal backup tooling.
+database, and refuses one whose schema differs from its own version. Days are UTC dates.
+
+Old backups are kept unless you set `backup.keep_days` (or pass `--keep-days N`). Then, only after
+the new pair was written, the command removes the files in `DIR` named exactly `waypoint-YYYYMMDD.db`
+or `.json` whose date is more than N days before today: with 30 on 27 November, 27 October and older
+go and 28 October stays. The date in the name decides, not the file's time. Other files, symlinks,
+subfolders and later dates are left alone. It prints what it removed; a file it cannot remove is
+reported on stderr and the command exits 1. A failed backup removes nothing.
 
 ## 8. A worked example
 

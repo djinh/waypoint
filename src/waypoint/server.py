@@ -4,7 +4,7 @@
     waypointd [--config FILE] client add NAME ROLE --token-file FILE [--label TEXT]
     waypointd [--config FILE] client rotate NAME --token-file FILE
     waypointd [--config FILE] client route NAME DELIVERER|-
-    waypointd [--config FILE] backup DIR
+    waypointd [--config FILE] backup DIR [--keep-days N]
     waypointd [--config FILE] check [--config-only]
 
 Tokens are written only to the named file, created with mode 0600; they are never printed. The
@@ -128,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("serve", help="run the daemon (the default)")
     bk = sub.add_parser("backup", help="write a consistent copy of the database and a JSON export to DIR")
     bk.add_argument("dir")
+    bk.add_argument("--keep-days", type=int, metavar="N",
+                    help="then remove the backups dated more than N days before today (default: backup.keep_days)")
     ck = sub.add_parser("check", help="check the configuration (and the clients it names) without changing anything")
     ck.add_argument("--config-only", action="store_true", help="don't open the database")
     cl = sub.add_parser("client", help="register clients locally").add_subparsers(dest="action", required=True)
@@ -166,20 +168,36 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "check":
         return dry_check(cfg, args.config_only)
+    keep_days = getattr(args, "keep_days", None)
+    if keep_days is not None and not 1 <= keep_days <= 3650:
+        print("waypointd: --keep-days: a whole number from 1 to 3650", file=sys.stderr)
+        return 2
     try:
         store = Store(connect(cfg.database, migrate_schema=False), settings=cfg.settings)
     except SchemaMismatch as e:
         print(f"waypointd: {e}", file=sys.stderr)
         return 1
     if args.cmd == "backup":
-        from .monitor import backup
+        from .monitor import backup, prune_backups
         try:
             db_path, json_path = backup(store, args.dir)
         except OSError as e:
             print(f"waypointd: backup: {e.strerror}", file=sys.stderr)
             return 1
         print(f"waypointd: wrote {db_path.name} and {json_path.name}")
-        return 0
+        keep = keep_days if keep_days is not None else cfg.backup_keep_days
+        if keep is None:
+            return 0
+        try:  # only after a backup that worked: a failing backup never costs an old one
+            removed, failed = prune_backups(args.dir, store.now().date(), keep)
+        except OSError as e:
+            print(f"waypointd: backup: listing {args.dir} to remove old backups: {e.strerror}", file=sys.stderr)
+            return 1
+        if removed:
+            print(f"waypointd: removed {len(removed)} backup files older than {keep} days: {', '.join(removed)}")
+        for name, reason in failed:
+            print(f"waypointd: backup: could not remove {name}: {reason}", file=sys.stderr)
+        return 1 if failed else 0
     if args.action == "route":
         try:
             store.route(args.name, None if args.deliverer == "-" else args.deliverer)

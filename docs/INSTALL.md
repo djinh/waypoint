@@ -230,7 +230,15 @@ sudo systemctl enable --now waypoint-backup.timer
 Every night it writes `/var/lib/waypoint/backup/waypoint-YYYYMMDD.db` (a consistent copy of the
 database) and `waypoint-YYYYMMDD.json` (clients, tracks, items with their history). Neither holds a
 token: the database keeps only hashes and the export not even those. Let your normal backup pick up
-that folder and prune old days. To restore, stop the service, put a copy back and remove the old
+that folder. Old days are kept until you set how many to keep, in `/etc/waypoint/waypoint.toml`:
+
+```toml
+[backup]
+keep_days = 30
+```
+
+Each run then removes the pairs dated more than 30 days before its own (see
+[CONFIGURATION.md](CONFIGURATION.md), section 7). To restore, stop the service, put a copy back and remove the old
 write-ahead files, which belong to the database being replaced:
 
 ```sh
@@ -323,6 +331,14 @@ goes to `/dev/null`; an error still reaches cron's mail):
 ```sh
 30 3 * * * /usr/local/bin/backup; rc=$?; if [ $rc -eq 0 ]; then WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur done R-1 >/dev/null; else WAYPOINT_NAME=backup-job /opt/waypoint/bin/wp recur failed R-1 --note "exit $rc" >/dev/null; fi
 ```
+
+### Upgrading to 2.0.5
+
+2.0.5 adds `backup.keep_days` (and `waypointd backup DIR --keep-days N`): no migration, no API
+change. Without the setting nothing changes, and every backup is kept. With it, each backup run removes the
+backups dated more than N days before its own. Install the new version, add the setting to
+`waypoint.toml`, and run `waypointd --config FILE check`. The daemon needn't be restarted (only the
+backup command reads the setting), and neither do the deliverers.
 
 ### Upgrading to 2.0.3
 
